@@ -16,7 +16,9 @@ function GameTable() {
   useEffect(() => {
     const roomRef = ref(db, `rooms/${roomId}`);
     const unsubscribe = onValue(roomRef, (snapshot) => {
-      if (snapshot.exists()) setGameState(snapshot.val());
+      if (snapshot.exists()) {
+        setGameState(snapshot.val());
+      }
     });
     return () => off(roomRef, 'value', unsubscribe);
   }, [roomId]);
@@ -31,10 +33,8 @@ function GameTable() {
     const values = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A'];
     let deck = [];
     
-    // 1. Create the deck
     for (const suit of suits) {
       for (const value of values) {
-        // Add a numeric weight so we can easily sort the hand later
         let weight = parseInt(value);
         if (value === 'J') weight = 11;
         if (value === 'Q') weight = 12;
@@ -44,41 +44,43 @@ function GameTable() {
       }
     }
 
-    // 2. Shuffle the deck (Fisher-Yates algorithm)
+    // Shuffle
     for (let i = deck.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
       [deck[i], deck[j]] = [deck[j], deck[i]];
     }
 
-    // 3. Deal to seated players
     const updatedPlayers = { ...gameState.players };
     let cardIndex = 0;
     
     Object.keys(updatedPlayers).forEach(key => {
       const hand = deck.slice(cardIndex, cardIndex + 13);
-      
-      // Auto-sort the hand: Spades on the left, then highest to lowest
       hand.sort((a, b) => {
           if (a.suit === '♠' && b.suit !== '♠') return -1;
           if (b.suit === '♠' && a.suit !== '♠') return 1;
           if (a.suit !== b.suit) return a.suit.localeCompare(b.suit);
           return b.weight - a.weight;
       });
-      
       updatedPlayers[key].hand = hand;
-      cardIndex += 13; // Move to the next 13 cards for the next player
+      // Reset bid in case this is a new round
+      delete updatedPlayers[key].bid; 
+      cardIndex += 13;
     });
 
-    // 4. Save the hands to the database
     await update(ref(db, `rooms/${roomId}`), {
       status: 'playing',
       players: updatedPlayers
     });
   };
 
+  const submitBid = async (bidValue) => {
+    const playerRef = ref(db, `rooms/${roomId}/players/${playerId}`);
+    await update(playerRef, { bid: bidValue });
+  };
+
   if (!gameState) return <h2 style={{ textAlign: 'center', marginTop: '2rem' }}>Taking a seat...</h2>;
 
-const Chair = ({ seatName }) => {
+  const Chair = ({ seatName }) => {
     const occupant = getPlayerInSeat(seatName);
     return (
       <div style={{
@@ -92,54 +94,32 @@ const Chair = ({ seatName }) => {
       }}>
         <div style={{ fontSize: '0.8rem', textTransform: 'uppercase', marginBottom: '0.5rem' }}>{seatName}</div>
         <div style={{ fontWeight: 'bold' }}>{occupant ? occupant.name : 'Empty'}</div>
-        
-        {/* Show the Bid if it exists */}
         {occupant && occupant.bid !== undefined && (
-          <div style={{ 
-            marginTop: '0.5rem', 
-            backgroundColor: 'rgba(0,0,0,0.2)', 
-            padding: '2px 8px', 
-            borderRadius: '4px',
-            fontSize: '0.9rem'
-          }}>
+          <div style={{ marginTop: '0.5rem', backgroundColor: 'rgba(0,0,0,0.2)', padding: '2px 8px', borderRadius: '4px' }}>
             Bid: {occupant.bid === 0 ? 'NIL' : occupant.bid}
           </div>
         )}
       </div>
     );
   };
+
   return (
     <div style={{ padding: '2rem', maxWidth: '800px', margin: '0 auto', textAlign: 'center' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem' }}>
         <h2>Room: <span style={{ color: '#0066cc' }}>{roomId}</span></h2>
-        <p>Status: {gameState.status} | My ID: {playerId} | My Bid: {JSON.stringify(gameState.players[playerId]?.bid)}</p>
-        <button 
-          onClick={() => navigate('/')} 
-          style={{ padding: '0.5rem 1rem', backgroundColor: '#dc3545', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
-        >
-          Leave Table
-        </button>
+        <button onClick={() => navigate('/')} style={{ padding: '0.5rem 1rem', backgroundColor: '#dc3545', color: 'white', border: 'none', borderRadius: '4px' }}>Leave</button>
       </div>
 
       <div style={{
-        display: 'grid',
-        gridTemplateColumns: '1fr 1fr 1fr',
-        gridTemplateRows: 'auto auto auto',
-        gap: '1rem',
-        alignItems: 'center',
-        justifyItems: 'center',
-        backgroundColor: '#f8f9fa',
-        padding: '2rem',
-        borderRadius: '16px'
+        display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gridTemplateRows: 'auto auto auto',
+        gap: '1rem', alignItems: 'center', justifyItems: 'center', backgroundColor: '#f8f9fa', padding: '2rem', borderRadius: '16px'
       }}>
         <div style={{ gridColumn: '2' }}><Chair seatName="North" /></div>
         <div style={{ gridColumn: '1' }}><Chair seatName="West" /></div>
         <div style={{ 
           gridColumn: '2', width: '100%', height: '150px', backgroundColor: '#2E7D32', borderRadius: '50%',
           display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 'bold', border: '8px solid #5D4037' 
-        }}>
-          The Felt
-        </div>
+        }}>The Felt</div>
         <div style={{ gridColumn: '3' }}><Chair seatName="East" /></div>
         <div style={{ gridColumn: '2' }}><Chair seatName="South" /></div>
       </div>
@@ -147,77 +127,56 @@ const Chair = ({ seatName }) => {
       {/* Host Controls */}
       {isHost && gameState.status === 'waiting' && (
         <div style={{ marginTop: '2rem' }}>
-          <button 
-            onClick={dealCards} 
-            style={{ padding: '0.75rem 1.5rem', backgroundColor: '#007bff', color: 'white', borderRadius: '8px', border: 'none', cursor: 'pointer', fontSize: '1.2rem', fontWeight: 'bold' }}
-          >
+          <button onClick={dealCards} style={{ padding: '0.75rem 1.5rem', backgroundColor: '#007bff', color: 'white', borderRadius: '8px', fontSize: '1.2rem' }}>
             Deal Cards!
           </button>
         </div>
       )}
 
-      {/* My Hand */}
-      {gameState.players && gameState.players[playerId]?.hand && (
-        <div style={{ marginTop: '2rem', padding: '1.5rem', backgroundColor: '#fff', borderRadius: '8px', border: '1px solid #ccc' }}>
-          <h3>My Hand</h3>
-          
-          {/* The Card Fan Container */}
-          <div style={{ 
-            display: 'flex', 
-            justifyContent: 'center', 
-            marginTop: '1rem', 
-            paddingTop: '1rem', // Extra space for the hover pop-up
-            overflowX: 'auto', // Allows scrolling on very small phone screens if needed
-            paddingBottom: '1rem' 
-          }}>
-            {gameState.players[playerId].hand.map((card, idx) => (
-              <div 
-                key={idx} 
-                style={{ 
-                  width: '60px', 
-                  height: '90px',
-                  padding: '0.5rem', 
-                  border: '1px solid #999', 
-                  borderRadius: '6px',
-                  color: card.suit === '♥' || card.suit === '♦' ? '#d32f2f' : '#000',
-                  backgroundColor: '#fff',
-                  fontSize: '1.4rem',
-                  fontWeight: 'bold',
-                  boxShadow: '-3px 0 5px rgba(0,0,0,0.15)', // Shadow makes the overlapping pop
-                  
-                  // THE MAGIC: Every card after the first one slides left to overlap
-                  marginLeft: idx === 0 ? '0' : '-1.8rem', 
-                  
-                  // Ensure they stack left-to-right properly
-                  position: 'relative', 
-                  zIndex: idx, 
-                  
-                  // Smooth animation for the hover effect
-                  transition: 'transform 0.2s cubic-bezier(0.2, 0.8, 0.2, 1)', 
-                  cursor: 'pointer',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  alignItems: 'center',
-                  justifyContent: 'center'
-                }}
-                // Hover Effects: Lift the card up when moused over!
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.transform = 'translateY(-20px)';
-                  e.currentTarget.style.zIndex = '50'; // Bring to absolute front
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.transform = 'translateY(0)';
-                  e.currentTarget.style.zIndex = idx; // Put back in original layer
-                }}
+      {/* Bidding Phase UI */}
+      {gameState.status === 'playing' && gameState.players?.[playerId] && 
+       gameState.players[playerId].bid === undefined && (
+        <div style={{ marginTop: '2rem', padding: '1.5rem', backgroundColor: '#fff', borderRadius: '8px', border: '2px solid #007bff' }}>
+          <h3>Place Your Bid</h3>
+          <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'center', flexWrap: 'wrap', marginTop: '1rem' }}>
+            {['Nil', 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13].map((val) => (
+              <button
+                key={val}
+                onClick={() => submitBid(val === 'Nil' ? 0 : val)}
+                style={{ padding: '0.75rem', minWidth: '45px', cursor: 'pointer', backgroundColor: val === 'Nil' ? '#6f42c1' : '#007bff', color: 'white', borderRadius: '4px' }}
               >
-                <div style={{ lineHeight: '1' }}>{card.value}</div>
-                <div style={{ lineHeight: '1' }}>{card.suit}</div>
-              </div>
+                {val}
+              </button>
             ))}
           </div>
         </div>
       )}
 
+      {/* My Hand */}
+      {gameState.players?.[playerId]?.hand && (
+        <div style={{ marginTop: '2rem', padding: '1.5rem', backgroundColor: '#fff', borderRadius: '8px', border: '1px solid #ccc' }}>
+          <h3>My Hand</h3>
+          <div style={{ display: 'flex', justifyContent: 'center', marginTop: '1rem', overflowX: 'auto', paddingBottom: '1rem' }}>
+            {gameState.players[playerId].hand.map((card, idx) => (
+              <div 
+                key={idx} 
+                style={{ 
+                  width: '60px', height: '90px', padding: '0.5rem', border: '1px solid #999', borderRadius: '6px',
+                  color: card.suit === '♥' || card.suit === '♦' ? '#d32f2f' : '#000',
+                  backgroundColor: '#fff', fontSize: '1.4rem', fontWeight: 'bold',
+                  marginLeft: idx === 0 ? '0' : '-1.8rem', position: 'relative', zIndex: idx, 
+                  transition: 'transform 0.2s', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center'
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.transform = 'translateY(-20px)'; e.currentTarget.style.zIndex = '50'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.zIndex = idx; }}
+              >
+                <div>{card.value}</div>
+                <div>{card.suit}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
