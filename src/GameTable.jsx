@@ -23,6 +23,27 @@ function GameTable() {
     return () => off(roomRef, 'value', unsubscribe);
   }, [roomId]);
 
+  useEffect(() => {
+  // Only the host should manage the game state transitions to avoid double-triggers
+  if (!isHost || !gameState || gameState.status !== 'playing') return;
+
+  const players = gameState.players || {};
+  const playerIds = Object.keys(players);
+
+  // Check if we have 4 players AND everyone has a bid property
+  const allBid = playerIds.length === 4 && playerIds.every(id => players[id].bid !== undefined);
+
+  if (allBid) {
+    console.log("All bids are in! Starting the game...");
+    const roomRef = ref(db, `rooms/${roomId}`);
+    update(roomRef, { 
+      status: 'tricks',
+      currentTurn: 'player1', // North (Host) starts the first game
+      currentTrick: [] // This will hold the cards played to the center
+    });
+  }
+}, [gameState, isHost, roomId]);
+
   const getPlayerInSeat = (seatName) => {
     if (!gameState || !gameState.players) return null;
     return Object.values(gameState.players).find(p => p.seat === seatName);
@@ -80,7 +101,7 @@ function GameTable() {
 
   if (!gameState) return <h2 style={{ textAlign: 'center', marginTop: '2rem' }}>Taking a seat...</h2>;
 
-  const Chair = ({ seatName }) => {
+const Chair = ({ seatName }) => {
     const occupant = getPlayerInSeat(seatName);
     return (
       <div style={{
@@ -94,15 +115,17 @@ function GameTable() {
       }}>
         <div style={{ fontSize: '0.8rem', textTransform: 'uppercase', marginBottom: '0.5rem' }}>{seatName}</div>
         <div style={{ fontWeight: 'bold' }}>{occupant ? occupant.name : 'Empty'}</div>
-        {occupant && occupant.bid !== undefined && (
+        
+        {/* Bid Logic */}
+        {occupant && (
           <div style={{ marginTop: '0.5rem', backgroundColor: 'rgba(0,0,0,0.2)', padding: '2px 8px', borderRadius: '4px' }}>
-            Bid: {occupant.bid === 0 ? 'NIL' : occupant.bid}
+            {occupant.bid !== undefined ? `Bid: ${occupant.bid === 0 ? 'NIL' : occupant.bid}` : 'Bidding...'}
           </div>
         )}
       </div>
     );
   };
-
+  
   return (
     <div style={{ padding: '2rem', maxWidth: '800px', margin: '0 auto', textAlign: 'center' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem' }}>
