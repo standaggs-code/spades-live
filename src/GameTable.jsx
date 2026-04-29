@@ -99,6 +99,35 @@ function GameTable() {
     await update(playerRef, { bid: bidValue });
   };
 
+const playCard = async (card, cardIndex) => {
+  // 1. Only let the player play if it's their turn
+  if (gameState.currentTurn !== playerId) return alert("Wait your turn!");
+
+  const updatedHand = [...gameState.players[playerId].hand];
+  updatedHand.splice(cardIndex, 1); // Remove the card from hand
+
+  const newTrickMove = {
+    playerId: playerId,
+    card: card,
+    seat: gameState.players[playerId].seat
+  };
+
+  const updatedTrick = [...(gameState.currentTrick || []), newTrickMove];
+
+  // 2. Determine who goes next (N -> E -> S -> W -> N)
+  const turnOrder = ['player1', 'player2', 'player3', 'player4'];
+  const currentIndex = turnOrder.indexOf(playerId);
+  const nextPlayer = turnOrder[(currentIndex + 1) % 4];
+
+  // 3. Update Firebase
+  const roomRef = ref(db, `rooms/${roomId}`);
+  await update(roomRef, {
+    [`players/${playerId}/hand`]: updatedHand,
+    currentTrick: updatedTrick,
+    currentTurn: nextPlayer
+  });
+};
+
   if (!gameState) return <h2 style={{ textAlign: 'center', marginTop: '2rem' }}>Taking a seat...</h2>;
 
 const Chair = ({ seatName }) => {
@@ -140,9 +169,43 @@ const Chair = ({ seatName }) => {
         <div style={{ gridColumn: '2' }}><Chair seatName="North" /></div>
         <div style={{ gridColumn: '1' }}><Chair seatName="West" /></div>
         <div style={{ 
-          gridColumn: '2', width: '100%', height: '150px', backgroundColor: '#2E7D32', borderRadius: '50%',
-          display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 'bold', border: '8px solid #5D4037' 
-        }}>The Felt</div>
+  gridColumn: '2', width: '100%', height: '180px', backgroundColor: '#2E7D32', borderRadius: '50%',
+  display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative', border: '8px solid #5D4037' 
+}}>
+  {/* Display cards in the trick */}
+  {gameState.currentTrick?.map((move, index) => (
+    <div key={index} style={{
+      position: 'absolute',
+      width: '50px',
+      height: '75px',
+      backgroundColor: 'white',
+      border: '1px solid #000',
+      borderRadius: '4px',
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'center',
+      justifyContent: 'center',
+      fontWeight: 'bold',
+      color: move.card.suit === '♥' || move.card.suit === '♦' ? 'red' : 'black',
+      boxShadow: '0 2px 4px rgba(0,0,0,0.3)',
+      // Position the card near the player's seat
+      transform: 
+        move.seat === 'North' ? 'translateY(-40px)' :
+        move.seat === 'South' ? 'translateY(40px)' :
+        move.seat === 'East' ? 'translateX(40px)' :
+        'translateX(-40px)'
+    }}>
+      {move.card.value}{move.card.suit}
+    </div>
+  ))}
+  
+  {/* Show whose turn it is in the center if the trick isn't full */}
+  {gameState.currentTrick?.length < 4 && (
+    <div style={{ color: 'rgba(255,255,255,0.5)', fontSize: '0.8rem' }}>
+      {gameState.players[gameState.currentTurn]?.name}'s Turn
+    </div>
+  )}
+</div>
         <div style={{ gridColumn: '3' }}><Chair seatName="East" /></div>
         <div style={{ gridColumn: '2' }}><Chair seatName="South" /></div>
       </div>
@@ -183,12 +246,14 @@ const Chair = ({ seatName }) => {
             {gameState.players[playerId].hand.map((card, idx) => (
               <div 
                 key={idx} 
+                onClick={() => playCard(card, idx)}
                 style={{ 
                   width: '60px', height: '90px', padding: '0.5rem', border: '1px solid #999', borderRadius: '6px',
                   color: card.suit === '♥' || card.suit === '♦' ? '#d32f2f' : '#000',
                   backgroundColor: '#fff', fontSize: '1.4rem', fontWeight: 'bold',
                   marginLeft: idx === 0 ? '0' : '-1.8rem', position: 'relative', zIndex: idx, 
-                  transition: 'transform 0.2s', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center'
+                  transition: 'transform 0.2s', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+                  border: gameState.currentTurn === playerId ? '2px solid #ffc107' : '1px solid #999', // Highlight hand if it's your turn
                 }}
                 onMouseEnter={(e) => { e.currentTarget.style.transform = 'translateY(-20px)'; e.currentTarget.style.zIndex = '50'; }}
                 onMouseLeave={(e) => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.zIndex = idx; }}
