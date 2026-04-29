@@ -78,7 +78,7 @@ function GameTable() {
 
   if (!gameState) return <h2 style={{ textAlign: 'center', marginTop: '2rem' }}>Taking a seat...</h2>;
 
-  const Chair = ({ seatName }) => {
+const Chair = ({ seatName }) => {
     const occupant = getPlayerInSeat(seatName);
     return (
       <div style={{
@@ -87,14 +87,27 @@ function GameTable() {
         color: occupant ? 'white' : '#666',
         borderRadius: '8px',
         minWidth: '100px',
-        border: occupant ? '2px solid #2E7D32' : '2px dashed #999'
+        border: occupant ? '2px solid #2E7D32' : '2px dashed #999',
+        position: 'relative'
       }}>
         <div style={{ fontSize: '0.8rem', textTransform: 'uppercase', marginBottom: '0.5rem' }}>{seatName}</div>
         <div style={{ fontWeight: 'bold' }}>{occupant ? occupant.name : 'Empty'}</div>
+        
+        {/* Show the Bid if it exists */}
+        {occupant && occupant.bid !== undefined && (
+          <div style={{ 
+            marginTop: '0.5rem', 
+            backgroundColor: 'rgba(0,0,0,0.2)', 
+            padding: '2px 8px', 
+            borderRadius: '4px',
+            fontSize: '0.9rem'
+          }}>
+            Bid: {occupant.bid === 0 ? 'NIL' : occupant.bid}
+          </div>
+        )}
       </div>
     );
   };
-
   return (
     <div style={{ padding: '2rem', maxWidth: '800px', margin: '0 auto', textAlign: 'center' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem' }}>
