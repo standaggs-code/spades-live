@@ -23,26 +23,49 @@ function GameTable() {
     return () => off(roomRef, 'value', unsubscribe);
   }, [roomId]);
 
+  // 3. Referee: Evaluate Trick after 4 cards are played
   useEffect(() => {
-  // Only the host should manage the game state transitions to avoid double-triggers
-  if (!isHost || !gameState || gameState.status !== 'playing') return;
+    if (!isHost || !gameState || gameState.status !== 'tricks') return;
+    
+    // FORCE FIREBASE DATA INTO AN ARRAY
+    const trick = gameState.currentTrick ? Object.values(gameState.currentTrick) : [];
+    
+    if (trick.length === 4) {
+      const timer = setTimeout(async () => {
+        const leadSuit = trick[0].card.suit;
+        let winningMove = trick[0];
 
-  const players = gameState.players || {};
-  const playerIds = Object.keys(players);
+        // Evaluate the 4 cards
+        for (let i = 1; i < 4; i++) {
+          const move = trick[i];
+          const winningCard = winningMove.card;
+          const currentCard = move.card;
 
-  // Check if we have 4 players AND everyone has a bid property
-  const allBid = playerIds.length === 4 && playerIds.every(id => players[id].bid !== undefined);
+          if (currentCard.suit === '♠' && winningCard.suit !== '♠') {
+            winningMove = move;
+          } else if (currentCard.suit === '♠' && winningCard.suit === '♠') {
+            if (currentCard.weight > winningCard.weight) winningMove = move;
+          } else if (currentCard.suit === leadSuit && winningCard.suit === leadSuit) {
+            if (currentCard.weight > winningCard.weight) winningMove = move;
+          }
+        }
 
-  if (allBid) {
-    console.log("All bids are in! Starting the game...");
-    const roomRef = ref(db, `rooms/${roomId}`);
-    update(roomRef, { 
-      status: 'tricks',
-      currentTurn: 'player1', // North (Host) starts the first game
-      currentTrick: [] // This will hold the cards played to the center
-    });
-  }
-}, [gameState, isHost, roomId]);
+        const winnerId = winningMove.playerId;
+        const currentTricksTaken = gameState.players[winnerId].tricksTaken || 0;
+
+        // Note: We use null instead of [] here so Firebase wipes the table completely clean
+        await update(ref(db, `rooms/${roomId}`), {
+          currentTrick: null,
+          currentTurn: winnerId,
+          [`players/${winnerId}/tricksTaken`]: currentTricksTaken + 1
+        });
+
+      }, 3000); 
+
+      return () => clearTimeout(timer);
+    }
+  }, [gameState?.currentTrick, isHost, roomId, gameState?.status]);
+
 
 const randomizeSeats = async () => {
   const seats = ['North', 'East', 'South', 'West'];
@@ -121,35 +144,34 @@ const randomizeSeats = async () => {
   };
 
 const playCard = async (card, cardIndex) => {
-  // 1. Only let the player play if it's their turn
-  if (gameState.currentTurn !== playerId) return alert("Wait your turn!");
+    if (gameState.currentTurn !== playerId) return alert("Wait your turn!");
 
-  const updatedHand = [...gameState.players[playerId].hand];
-  updatedHand.splice(cardIndex, 1); // Remove the card from hand
+    const updatedHand = [...gameState.players[playerId].hand];
+    updatedHand.splice(cardIndex, 1); 
 
-  const newTrickMove = {
-    playerId: playerId,
-    card: card,
-    seat: gameState.players[playerId].seat
+    const newTrickMove = {
+      playerId: playerId,
+      card: card,
+      seat: gameState.players[playerId].seat
+    };
+
+    // FORCE FIREBASE DATA INTO AN ARRAY
+    const currentTrickArray = gameState.currentTrick ? Object.values(gameState.currentTrick) : [];
+    const updatedTrick = [...currentTrickArray, newTrickMove];
+
+    const turnOrder = ['player1', 'player2', 'player3', 'player4'];
+    const currentIndex = turnOrder.indexOf(playerId);
+    const nextPlayer = turnOrder[(currentIndex + 1) % 4];
+
+    await update(ref(db, `rooms/${roomId}`), {
+      [`players/${playerId}/hand`]: updatedHand,
+      currentTrick: updatedTrick,
+      currentTurn: nextPlayer
+    });
   };
+  
 
-  const updatedTrick = [...(gameState.currentTrick || []), newTrickMove];
-
-  // 2. Determine who goes next (N -> E -> S -> W -> N)
-  const turnOrder = ['player1', 'player2', 'player3', 'player4'];
-  const currentIndex = turnOrder.indexOf(playerId);
-  const nextPlayer = turnOrder[(currentIndex + 1) % 4];
-
-  // 3. Update Firebase
-  const roomRef = ref(db, `rooms/${roomId}`);
-  await update(roomRef, {
-    [`players/${playerId}/hand`]: updatedHand,
-    currentTrick: updatedTrick,
-    currentTurn: nextPlayer
-  });
-};
-
-  if (!gameState) return <h2 style={{ textAlign: 'center', marginTop: '2rem' }}>Taking a seat...</h2>;
+ if (!gameState) return <h2 style={{ textAlign: 'center', marginTop: '2rem' }}>Taking a seat...</h2>;
 
 const Chair = ({ seatName }) => {
     const occupant = getPlayerInSeat(seatName);
@@ -208,18 +230,35 @@ return (
         </div>
       ) : (
         /* This is your existing Card Table Grid */
-        <div style={{
-          display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gridTemplateRows: 'auto auto auto',
-          gap: '1rem', alignItems: 'center', justifyItems: 'center', backgroundColor: '#f8f9fa', padding: '2rem', borderRadius: '16px'
-        }}>
-          <div style={{ gridColumn: '2' }}><Chair seatName="North" /></div>
-          <div style={{ gridColumn: '1' }}><Chair seatName="West" /></div>
-          <div style={{ 
+        <div style={{ 
             gridColumn: '2', width: '100%', height: '180px', backgroundColor: '#2E7D32', borderRadius: '50%',
             display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative', border: '8px solid #5D4037' 
           }}>
-             {/* ... (Keep your Trick Cards logic here) ... */}
-             The Felt
+            {/* Display cards in the trick securely */}
+            {(gameState.currentTrick ? Object.values(gameState.currentTrick) : []).map((move, index) => (
+              <div key={index} style={{
+                position: 'absolute', width: '50px', height: '75px', backgroundColor: 'white',
+                border: '1px solid #000', borderRadius: '4px', display: 'flex', flexDirection: 'column',
+                alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', zIndex: 10,
+                color: move.card.suit === '♥' || move.card.suit === '♦' ? '#d32f2f' : '#000',
+                boxShadow: '0 4px 8px rgba(0,0,0,0.4)',
+                transform: 
+                  move.seat === 'North' ? 'translateY(-45px)' :
+                  move.seat === 'South' ? 'translateY(45px)' :
+                  move.seat === 'East' ? 'translateX(45px)' :
+                  'translateX(-45px)'
+              }}>
+                <div style={{ lineHeight: '1' }}>{move.card.value}</div>
+                <div style={{ lineHeight: '1' }}>{move.card.suit}</div>
+              </div>
+            ))}
+            
+            {/* Show whose turn it is in the center if the trick isn't full */}
+            {gameState.status === 'tricks' && (gameState.currentTrick ? Object.keys(gameState.currentTrick).length : 0) < 4 && (
+              <div style={{ color: 'rgba(255,255,255,0.7)', fontSize: '1rem', fontWeight: 'bold', zIndex: 0 }}>
+                {gameState.players[gameState.currentTurn]?.name}'s Turn
+              </div>
+            )}
           </div>
           <div style={{ gridColumn: '3' }}><Chair seatName="East" /></div>
           <div style={{ gridColumn: '2' }}><Chair seatName="South" /></div>
