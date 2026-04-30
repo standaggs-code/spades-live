@@ -1,10 +1,10 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ref, set, get } from 'firebase/database';
+import { ref, set, get, update } from 'firebase/database';
 import { db } from './firebase'; // Your database connection
 
 function Lobby() {
-  const [playerName, setPlayerName] = useState('Daniel');
+  const [playerName, setPlayerName] = useState('Name Yourself');
   const [joinCode, setJoinCode] = useState('');
   const navigate = useNavigate();
 
@@ -31,7 +31,7 @@ const createGame = async () => {
       await set(roomRef, {
         status: 'waiting', 
         players: {
-          player1: { name: playerName, seat: 'North' }
+          player1: { name: playerName, id: 'player1' }
         }
       });
 
@@ -46,31 +46,38 @@ const createGame = async () => {
   };
 
 const joinGame = async () => {
-  if (!playerName.trim() || !joinCode.trim()) return alert("Enter name and room code");
+    if (!playerName.trim() || !joinCode.trim()) return alert("Enter name and room code");
+    
+    const upperCode = joinCode.toUpperCase();
+    const roomRef = ref(db, `rooms/${upperCode}`);
+
+    try {
+      const snapshot = await get(roomRef);
+
+      if (snapshot.exists()) {
+        const roomData = snapshot.val();
+        const currentPlayers = roomData.players || {};
+        const count = Object.keys(currentPlayers).length;
+
+        if (count >= 4) return alert("Room is full!");
+
+        // Just add them to the list of players without a seat yet
+        const nextPlayerId = `player${count + 1}`;
+        await update(ref(db, `rooms/${upperCode}/players/${nextPlayerId}`), {
+          name: playerName,
+          id: nextPlayerId // Store ID for reference
+        });
+
+        navigate(`/room/${upperCode}?player=${nextPlayerId}`);
+      } else {
+        alert("Room not found!");
+      }
+    } catch (error) {
+      console.error("Join Error:", error);
+      alert(`Error joining room: ${error.message}`);
+    }
+  };
   
-  const upperCode = joinCode.toUpperCase();
-  const roomRef = ref(db, `rooms/${upperCode}`);
-  const snapshot = await get(roomRef);
-
-  if (snapshot.exists()) {
-    const roomData = snapshot.val();
-    const currentPlayers = roomData.players || {};
-    const count = Object.keys(currentPlayers).length;
-
-    if (count >= 4) return alert("Room is full!");
-
-    // Just add them to the list of players without a seat yet
-    const nextPlayerId = `player${count + 1}`;
-    await update(ref(db, `rooms/${upperCode}/players/${nextPlayerId}`), {
-      name: playerName,
-      id: nextPlayerId // Store ID for reference
-    });
-
-    navigate(`/room/${upperCode}?player=${nextPlayerId}`);
-  } else {
-    alert("Room not found!");
-  }
-};
 
   return (
     <div style={{ padding: '2rem', maxWidth: '400px', margin: '0 auto', textAlign: 'center' }}>
