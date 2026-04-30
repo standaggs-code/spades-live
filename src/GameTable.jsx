@@ -160,25 +160,48 @@ function GameTable() {
   };
 
   const playCard = async (card, cardIndex) => {
+    // 1. Check if it's their turn
     if (gameState.currentTurn !== playerId) return alert("Wait your turn!");
 
+    // FORCE FIREBASE DATA INTO AN ARRAY
+    const currentTrickArray = gameState.currentTrick ? Object.values(gameState.currentTrick) : [];
+
+    // --- NEW: Follow Suit Validation ---
+    if (currentTrickArray.length > 0) {
+      const leadSuit = currentTrickArray[0].card.suit;
+      const myHand = gameState.players[playerId].hand;
+
+      // If the card they clicked doesn't match the lead suit...
+      if (card.suit !== leadSuit) {
+        // ...check if they actually HAVE the lead suit in their hand
+        const hasLeadSuit = myHand.some(c => c.suit === leadSuit);
+        
+        if (hasLeadSuit) {
+          return alert(`You must follow suit! Please play a ${leadSuit}.`);
+        }
+      }
+    }
+    // -----------------------------------
+
+    // 2. Remove card from hand
     const updatedHand = [...gameState.players[playerId].hand];
     updatedHand.splice(cardIndex, 1); 
 
+    // 3. Add card to trick
     const newTrickMove = {
       playerId: playerId,
       card: card,
       seat: gameState.players[playerId].seat
     };
 
-    // FORCE FIREBASE DATA INTO AN ARRAY
-    const currentTrickArray = gameState.currentTrick ? Object.values(gameState.currentTrick) : [];
     const updatedTrick = [...currentTrickArray, newTrickMove];
 
+    // 4. Pass the turn
     const turnOrder = ['player1', 'player2', 'player3', 'player4'];
     const currentIndex = turnOrder.indexOf(playerId);
     const nextPlayer = turnOrder[(currentIndex + 1) % 4];
 
+    // 5. Update Firebase
     await update(ref(db, `rooms/${roomId}`), {
       [`players/${playerId}/hand`]: updatedHand,
       currentTrick: updatedTrick,
