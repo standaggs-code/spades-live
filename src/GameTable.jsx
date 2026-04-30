@@ -10,9 +10,9 @@ function GameTable() {
   const navigate = useNavigate();
   const [gameState, setGameState] = useState(null);
 
-  // Check if the current user is the room creator
   const isHost = playerId === 'player1';
 
+  // 1. Core Database Listener
   useEffect(() => {
     const roomRef = ref(db, `rooms/${roomId}`);
     const unsubscribe = onValue(roomRef, (snapshot) => {
@@ -22,6 +22,26 @@ function GameTable() {
     });
     return () => off(roomRef, 'value', unsubscribe);
   }, [roomId]);
+
+  // 2. Referee: Detect when all bids are in
+  useEffect(() => {
+    if (!isHost || !gameState || gameState.status !== 'playing') return;
+
+    const players = gameState.players || {};
+    const playerIds = Object.keys(players);
+
+    const allBid = playerIds.length === 4 && playerIds.every(id => 
+      players[id].bid !== undefined && players[id].bid !== null
+    );
+
+    if (allBid) {
+      update(ref(db, `rooms/${roomId}`), { 
+        status: 'tricks',
+        currentTurn: 'player1', // Host leads first trick
+        currentTrick: [] 
+      });
+    }
+  }, [gameState, isHost, roomId]);
 
   // 3. Referee: Evaluate Trick after 4 cards are played
   useEffect(() => {
@@ -53,7 +73,7 @@ function GameTable() {
         const winnerId = winningMove.playerId;
         const currentTricksTaken = gameState.players[winnerId].tricksTaken || 0;
 
-        // Note: We use null instead of [] here so Firebase wipes the table completely clean
+        // Wipe the table clean, give trick to winner, make it their turn
         await update(ref(db, `rooms/${roomId}`), {
           currentTrick: null,
           currentTurn: winnerId,
@@ -66,31 +86,28 @@ function GameTable() {
     }
   }, [gameState?.currentTrick, isHost, roomId, gameState?.status]);
 
-
-const randomizeSeats = async () => {
-  const seats = ['North', 'East', 'South', 'West'];
-  // Shuffle seats array
-  for (let i = seats.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [seats[i], seats[j]] = [seats[j], seats[i]];
-  }
-
-  const updatedPlayers = { ...gameState.players };
-  Object.keys(updatedPlayers).forEach((id, index) => {
-    updatedPlayers[id].seat = seats[index];
-    // Assign teams: North/South = Team A, East/West = Team B
-    updatedPlayers[id].team = (seats[index] === 'North' || seats[index] === 'South') ? 'A' : 'B';
-  });
-
-  await update(ref(db, `rooms/${roomId}`), {
-    players: updatedPlayers,
-    status: 'seated' // New intermediate status
-  });
-};
-
   const getPlayerInSeat = (seatName) => {
     if (!gameState || !gameState.players) return null;
     return Object.values(gameState.players).find(p => p.seat === seatName);
+  };
+
+  const randomizeSeats = async () => {
+    const seats = ['North', 'East', 'South', 'West'];
+    for (let i = seats.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [seats[i], seats[j]] = [seats[j], seats[i]];
+    }
+
+    const updatedPlayers = { ...gameState.players };
+    Object.keys(updatedPlayers).forEach((id, index) => {
+      updatedPlayers[id].seat = seats[index];
+      updatedPlayers[id].team = (seats[index] === 'North' || seats[index] === 'South') ? 'A' : 'B';
+    });
+
+    await update(ref(db, `rooms/${roomId}`), {
+      players: updatedPlayers,
+      status: 'seated' 
+    });
   };
 
   const dealCards = async () => {
@@ -109,7 +126,6 @@ const randomizeSeats = async () => {
       }
     }
 
-    // Shuffle
     for (let i = deck.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
       [deck[i], deck[j]] = [deck[j], deck[i]];
@@ -127,8 +143,8 @@ const randomizeSeats = async () => {
           return b.weight - a.weight;
       });
       updatedPlayers[key].hand = hand;
-      // Reset bid in case this is a new round
       delete updatedPlayers[key].bid; 
+      updatedPlayers[key].tricksTaken = 0; 
       cardIndex += 13;
     });
 
@@ -143,7 +159,7 @@ const randomizeSeats = async () => {
     await update(playerRef, { bid: bidValue });
   };
 
-const playCard = async (card, cardIndex) => {
+  const playCard = async (card, cardIndex) => {
     if (gameState.currentTurn !== playerId) return alert("Wait your turn!");
 
     const updatedHand = [...gameState.players[playerId].hand];
@@ -169,11 +185,10 @@ const playCard = async (card, cardIndex) => {
       currentTurn: nextPlayer
     });
   };
-  
 
- if (!gameState) return <h2 style={{ textAlign: 'center', marginTop: '2rem' }}>Taking a seat...</h2>;
+  if (!gameState) return <h2 style={{ textAlign: 'center', marginTop: '2rem' }}>Taking a seat...</h2>;
 
-const Chair = ({ seatName }) => {
+  const Chair = ({ seatName }) => {
     const occupant = getPlayerInSeat(seatName);
     return (
       <div style={{
@@ -188,24 +203,33 @@ const Chair = ({ seatName }) => {
         <div style={{ fontSize: '0.8rem', textTransform: 'uppercase', marginBottom: '0.5rem' }}>{seatName}</div>
         <div style={{ fontWeight: 'bold' }}>{occupant ? occupant.name : 'Empty'}</div>
         
-        {/* Bid Logic */}
-        {occupant && (
-          <div style={{ marginTop: '0.5rem', backgroundColor: 'rgba(0,0,0,0.2)', padding: '2px 8px', borderRadius: '4px' }}>
-            {occupant.bid !== undefined ? `Bid: ${occupant.bid === 0 ? 'NIL' : occupant.bid}` : 'Bidding...'}
+        {occupant && occupant.bid !== undefined && (
+          <div style={{ 
+            marginTop: '0.5rem', 
+            backgroundColor: 'rgba(0,0,0,0.2)', 
+            padding: '4px 8px', 
+            borderRadius: '4px',
+            display: 'flex',
+            justifyContent: 'space-between',
+            fontSize: '0.9rem'
+          }}>
+            <span>Bid: {occupant.bid === 0 ? 'NIL' : occupant.bid}</span>
+            <span style={{ fontWeight: 'bold', color: '#ffeb3b' }}>
+              Tricks: {occupant.tricksTaken || 0}
+            </span>
           </div>
         )}
       </div>
     );
   };
-  
-return (
+
+  return (
     <div style={{ padding: '2rem', maxWidth: '800px', margin: '0 auto', textAlign: 'center' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem' }}>
         <h2>Room: <span style={{ color: '#0066cc' }}>{roomId}</span></h2>
-        <button onClick={() => navigate('/')} style={{ padding: '0.5rem 1rem', backgroundColor: '#dc3545', color: 'white', border: 'none', borderRadius: '4px' }}>Leave</button>
+        <button onClick={() => navigate('/')} style={{ padding: '0.5rem 1rem', backgroundColor: '#dc3545', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>Leave</button>
       </div>
 
-      {/* PHASE 3 START: Conditional Rendering */}
       {gameState.status === 'waiting' ? (
         <div style={{ padding: '2rem', backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #ccc', boxShadow: '0 4px 6px rgba(0,0,0,0.05)' }}>
           <h3>Waiting Room ({Object.keys(gameState.players || {}).length}/4)</h3>
@@ -218,7 +242,6 @@ return (
             ))}
           </ul>
           
-          {/* Only show the Randomize button to the host when 4 people are here */}
           {isHost && Object.keys(gameState.players || {}).length === 4 && (
             <button 
               onClick={randomizeSeats} 
@@ -229,8 +252,13 @@ return (
           )}
         </div>
       ) : (
-        /* This is your existing Card Table Grid */
-        <div style={{ 
+        <div style={{
+          display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gridTemplateRows: 'auto auto auto',
+          gap: '1rem', alignItems: 'center', justifyItems: 'center', backgroundColor: '#f8f9fa', padding: '2rem', borderRadius: '16px'
+        }}>
+          <div style={{ gridColumn: '2' }}><Chair seatName="North" /></div>
+          <div style={{ gridColumn: '1' }}><Chair seatName="West" /></div>
+          <div style={{ 
             gridColumn: '2', width: '100%', height: '180px', backgroundColor: '#2E7D32', borderRadius: '50%',
             display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative', border: '8px solid #5D4037' 
           }}>
@@ -256,7 +284,7 @@ return (
             {/* Show whose turn it is in the center if the trick isn't full */}
             {gameState.status === 'tricks' && (gameState.currentTrick ? Object.keys(gameState.currentTrick).length : 0) < 4 && (
               <div style={{ color: 'rgba(255,255,255,0.7)', fontSize: '1rem', fontWeight: 'bold', zIndex: 0 }}>
-                {gameState.players[gameState.currentTurn]?.name}'s Turn
+                {gameState.players[gameState.currentTurn]?.name}&apos;s Turn
               </div>
             )}
           </div>
@@ -264,29 +292,15 @@ return (
           <div style={{ gridColumn: '2' }}><Chair seatName="South" /></div>
         </div>
       )}
-      {/* PHASE 3 END */}
 
-      {/* Host Controls for Dealing (Only show once seated) */}
       {isHost && gameState.status === 'seated' && (
         <div style={{ marginTop: '2rem' }}>
-          <button onClick={dealCards} style={{ padding: '0.75rem 1.5rem', backgroundColor: '#007bff', color: 'white', borderRadius: '8px', fontSize: '1.2rem' }}>
+          <button onClick={dealCards} style={{ padding: '0.75rem 1.5rem', backgroundColor: '#007bff', color: 'white', border: 'none', borderRadius: '8px', fontSize: '1.2rem', cursor: 'pointer' }}>
             Deal First Hand!
           </button>
         </div>
       )}
 
-      {/* ... Rest of your file (Bidding UI and My Hand) ... */}
-
-      {/* Host Controls */}
-      {isHost && gameState.status === 'waiting' && (
-        <div style={{ marginTop: '2rem' }}>
-          <button onClick={dealCards} style={{ padding: '0.75rem 1.5rem', backgroundColor: '#007bff', color: 'white', borderRadius: '8px', fontSize: '1.2rem' }}>
-            Deal Cards!
-          </button>
-        </div>
-      )}
-
-      {/* Bidding Phase UI */}
       {gameState.status === 'playing' && gameState.players?.[playerId] && 
        gameState.players[playerId].bid === undefined && (
         <div style={{ marginTop: '2rem', padding: '1.5rem', backgroundColor: '#fff', borderRadius: '8px', border: '2px solid #007bff' }}>
@@ -296,7 +310,7 @@ return (
               <button
                 key={val}
                 onClick={() => submitBid(val === 'Nil' ? 0 : val)}
-                style={{ padding: '0.75rem', minWidth: '45px', cursor: 'pointer', backgroundColor: val === 'Nil' ? '#6f42c1' : '#007bff', color: 'white', borderRadius: '4px' }}
+                style={{ padding: '0.75rem', minWidth: '45px', cursor: 'pointer', backgroundColor: val === 'Nil' ? '#6f42c1' : '#007bff', color: 'white', border: 'none', borderRadius: '4px', fontWeight: 'bold' }}
               >
                 {val}
               </button>
@@ -305,28 +319,28 @@ return (
         </div>
       )}
 
-      {/* My Hand */}
       {gameState.players?.[playerId]?.hand && (
         <div style={{ marginTop: '2rem', padding: '1.5rem', backgroundColor: '#fff', borderRadius: '8px', border: '1px solid #ccc' }}>
           <h3>My Hand</h3>
-          <div style={{ display: 'flex', justifyContent: 'center', marginTop: '1rem', overflowX: 'auto', paddingBottom: '1rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'center', marginTop: '1rem', overflowX: 'auto', paddingBottom: '1rem', paddingTop: '1rem' }}>
             {gameState.players[playerId].hand.map((card, idx) => (
               <div 
                 key={idx} 
-                onClick={() => playCard(card, idx)}
+                onClick={() => gameState.status === 'tricks' && playCard(card, idx)}
                 style={{ 
-                  width: '60px', height: '90px', padding: '0.5rem', border: '1px solid #999', borderRadius: '6px',
+                  width: '60px', height: '90px', padding: '0.5rem', borderRadius: '6px',
+                  border: gameState.currentTurn === playerId ? '2px solid #ffc107' : '1px solid #999',
                   color: card.suit === '♥' || card.suit === '♦' ? '#d32f2f' : '#000',
                   backgroundColor: '#fff', fontSize: '1.4rem', fontWeight: 'bold',
                   marginLeft: idx === 0 ? '0' : '-1.8rem', position: 'relative', zIndex: idx, 
-                  transition: 'transform 0.2s', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-                  border: gameState.currentTurn === playerId ? '2px solid #ffc107' : '1px solid #999', // Highlight hand if it's your turn
+                  transition: 'transform 0.2s', cursor: gameState.currentTurn === playerId ? 'pointer' : 'default', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+                  boxShadow: '-3px 0 5px rgba(0,0,0,0.15)'
                 }}
                 onMouseEnter={(e) => { e.currentTarget.style.transform = 'translateY(-20px)'; e.currentTarget.style.zIndex = '50'; }}
                 onMouseLeave={(e) => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.zIndex = idx; }}
               >
-                <div>{card.value}</div>
-                <div>{card.suit}</div>
+                <div style={{ lineHeight: '1' }}>{card.value}</div>
+                <div style={{ lineHeight: '1' }}>{card.suit}</div>
               </div>
             ))}
           </div>
