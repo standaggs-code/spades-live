@@ -44,6 +44,27 @@ function GameTable() {
   }
 }, [gameState, isHost, roomId]);
 
+const randomizeSeats = async () => {
+  const seats = ['North', 'East', 'South', 'West'];
+  // Shuffle seats array
+  for (let i = seats.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [seats[i], seats[j]] = [seats[j], seats[i]];
+  }
+
+  const updatedPlayers = { ...gameState.players };
+  Object.keys(updatedPlayers).forEach((id, index) => {
+    updatedPlayers[id].seat = seats[index];
+    // Assign teams: North/South = Team A, East/West = Team B
+    updatedPlayers[id].team = (seats[index] === 'North' || seats[index] === 'South') ? 'A' : 'B';
+  });
+
+  await update(ref(db, `rooms/${roomId}`), {
+    players: updatedPlayers,
+    status: 'seated' // New intermediate status
+  });
+};
+
   const getPlayerInSeat = (seatName) => {
     if (!gameState || !gameState.players) return null;
     return Object.values(gameState.players).find(p => p.seat === seatName);
@@ -155,60 +176,67 @@ const Chair = ({ seatName }) => {
     );
   };
   
-  return (
+return (
     <div style={{ padding: '2rem', maxWidth: '800px', margin: '0 auto', textAlign: 'center' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem' }}>
         <h2>Room: <span style={{ color: '#0066cc' }}>{roomId}</span></h2>
         <button onClick={() => navigate('/')} style={{ padding: '0.5rem 1rem', backgroundColor: '#dc3545', color: 'white', border: 'none', borderRadius: '4px' }}>Leave</button>
       </div>
 
-      <div style={{
-        display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gridTemplateRows: 'auto auto auto',
-        gap: '1rem', alignItems: 'center', justifyItems: 'center', backgroundColor: '#f8f9fa', padding: '2rem', borderRadius: '16px'
-      }}>
-        <div style={{ gridColumn: '2' }}><Chair seatName="North" /></div>
-        <div style={{ gridColumn: '1' }}><Chair seatName="West" /></div>
-        <div style={{ 
-  gridColumn: '2', width: '100%', height: '180px', backgroundColor: '#2E7D32', borderRadius: '50%',
-  display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative', border: '8px solid #5D4037' 
-}}>
-  {/* Display cards in the trick */}
-  {gameState.currentTrick?.map((move, index) => (
-    <div key={index} style={{
-      position: 'absolute',
-      width: '50px',
-      height: '75px',
-      backgroundColor: 'white',
-      border: '1px solid #000',
-      borderRadius: '4px',
-      display: 'flex',
-      flexDirection: 'column',
-      alignItems: 'center',
-      justifyContent: 'center',
-      fontWeight: 'bold',
-      color: move.card.suit === '♥' || move.card.suit === '♦' ? 'red' : 'black',
-      boxShadow: '0 2px 4px rgba(0,0,0,0.3)',
-      // Position the card near the player's seat
-      transform: 
-        move.seat === 'North' ? 'translateY(-40px)' :
-        move.seat === 'South' ? 'translateY(40px)' :
-        move.seat === 'East' ? 'translateX(40px)' :
-        'translateX(-40px)'
-    }}>
-      {move.card.value}{move.card.suit}
-    </div>
-  ))}
-  
-  {/* Show whose turn it is in the center if the trick isn't full */}
-  {gameState.currentTrick?.length < 4 && (
-    <div style={{ color: 'rgba(255,255,255,0.5)', fontSize: '0.8rem' }}>
-      {gameState.players[gameState.currentTurn]?.name}'s Turn
-    </div>
-  )}
-</div>
-        <div style={{ gridColumn: '3' }}><Chair seatName="East" /></div>
-        <div style={{ gridColumn: '2' }}><Chair seatName="South" /></div>
-      </div>
+      {/* PHASE 3 START: Conditional Rendering */}
+      {gameState.status === 'waiting' ? (
+        <div style={{ padding: '2rem', backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #ccc', boxShadow: '0 4px 6px rgba(0,0,0,0.05)' }}>
+          <h3>Waiting Room ({Object.keys(gameState.players || {}).length}/4)</h3>
+          <p>The game will begin once four players have joined.</p>
+          <ul style={{ listStyle: 'none', padding: 0, margin: '2rem 0' }}>
+            {Object.values(gameState.players || {}).map((p, i) => (
+              <li key={i} style={{ fontSize: '1.4rem', margin: '0.75rem 0', color: '#2E7D32', fontWeight: 'bold' }}>
+                ♠️ {p.name} {p.id === playerId ? "(You)" : ""}
+              </li>
+            ))}
+          </ul>
+          
+          {/* Only show the Randomize button to the host when 4 people are here */}
+          {isHost && Object.keys(gameState.players || {}).length === 4 && (
+            <button 
+              onClick={randomizeSeats} 
+              style={{ padding: '1rem 2rem', backgroundColor: '#28a745', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '1.2rem', fontWeight: 'bold' }}
+            >
+              Randomize Seats & Start Game
+            </button>
+          )}
+        </div>
+      ) : (
+        /* This is your existing Card Table Grid */
+        <div style={{
+          display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gridTemplateRows: 'auto auto auto',
+          gap: '1rem', alignItems: 'center', justifyItems: 'center', backgroundColor: '#f8f9fa', padding: '2rem', borderRadius: '16px'
+        }}>
+          <div style={{ gridColumn: '2' }}><Chair seatName="North" /></div>
+          <div style={{ gridColumn: '1' }}><Chair seatName="West" /></div>
+          <div style={{ 
+            gridColumn: '2', width: '100%', height: '180px', backgroundColor: '#2E7D32', borderRadius: '50%',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative', border: '8px solid #5D4037' 
+          }}>
+             {/* ... (Keep your Trick Cards logic here) ... */}
+             The Felt
+          </div>
+          <div style={{ gridColumn: '3' }}><Chair seatName="East" /></div>
+          <div style={{ gridColumn: '2' }}><Chair seatName="South" /></div>
+        </div>
+      )}
+      {/* PHASE 3 END */}
+
+      {/* Host Controls for Dealing (Only show once seated) */}
+      {isHost && gameState.status === 'seated' && (
+        <div style={{ marginTop: '2rem' }}>
+          <button onClick={dealCards} style={{ padding: '0.75rem 1.5rem', backgroundColor: '#007bff', color: 'white', borderRadius: '8px', fontSize: '1.2rem' }}>
+            Deal First Hand!
+          </button>
+        </div>
+      )}
+
+      {/* ... Rest of your file (Bidding UI and My Hand) ... */}
 
       {/* Host Controls */}
       {isHost && gameState.status === 'waiting' && (

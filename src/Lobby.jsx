@@ -46,50 +46,31 @@ const createGame = async () => {
   };
 
 const joinGame = async () => {
-    if (!playerName.trim() || !joinCode.trim()) return alert("Enter name and room code");
-    
-    const upperCode = joinCode.toUpperCase();
-    const roomRef = ref(db, `rooms/${upperCode}`);
-    
-    try {
-      const snapshot = await get(roomRef);
+  if (!playerName.trim() || !joinCode.trim()) return alert("Enter name and room code");
+  
+  const upperCode = joinCode.toUpperCase();
+  const roomRef = ref(db, `rooms/${upperCode}`);
+  const snapshot = await get(roomRef);
 
-      if (snapshot.exists()) {
-        const roomData = snapshot.val();
-        const players = roomData.players || {};
-        const playerCount = Object.keys(players).length;
+  if (snapshot.exists()) {
+    const roomData = snapshot.val();
+    const currentPlayers = roomData.players || {};
+    const count = Object.keys(currentPlayers).length;
 
-        if (playerCount >= 4) {
-          return alert("Sorry, this table is full!");
-        }
+    if (count >= 4) return alert("Room is full!");
 
-        // Determine the next available player slot and seat
-        const newPlayerId = `player${playerCount + 1}`;
-        const seatOrder = ['North', 'East', 'South', 'West'];
-        
-        // Find which seats are already taken
-        const takenSeats = Object.values(players).map(p => p.seat);
-        // Find the first empty seat
-        const availableSeat = seatOrder.find(seat => !takenSeats.includes(seat));
+    // Just add them to the list of players without a seat yet
+    const nextPlayerId = `player${count + 1}`;
+    await update(ref(db, `rooms/${upperCode}/players/${nextPlayerId}`), {
+      name: playerName,
+      id: nextPlayerId // Store ID for reference
+    });
 
-        // Update the database to add the new player
-        const newPlayerRef = ref(db, `rooms/${upperCode}/players/${newPlayerId}`);
-        await set(newPlayerRef, {
-          name: playerName,
-          seat: availableSeat
-        });
-
-        // Send them to the room with their official player ID
-        navigate(`/room/${upperCode}?player=${newPlayerId}`);
-
-      } else {
-        alert("Room not found!");
-      }
-    } catch (error) {
-      console.error("Join error:", error);
-      alert("Failed to join room.");
-    }
-  };
+    navigate(`/room/${upperCode}?player=${nextPlayerId}`);
+  } else {
+    alert("Room not found!");
+  }
+};
 
   return (
     <div style={{ padding: '2rem', maxWidth: '400px', margin: '0 auto', textAlign: 'center' }}>
