@@ -205,9 +205,17 @@ const playCard = async (card, cardIndex) => {
 
     const updatedTrick = [...currentTrickArray, newTrickMove];
 
-    const turnOrder = ['player1', 'player2', 'player3', 'player4'];
-    const currentIndex = turnOrder.indexOf(playerId);
-    const nextPlayer = turnOrder[(currentIndex + 1) % 4];
+// 4. Pass the turn clockwise based on the current player's SEAT
+    const currentSeat = gameState.players[playerId].seat;
+    const clockwiseOrder = ['North', 'East', 'South', 'West'];
+    
+    const currentSeatIndex = clockwiseOrder.indexOf(currentSeat);
+    const nextSeat = clockwiseOrder[(currentSeatIndex + 1) % 4];
+    
+    // Find WHICH player ID is actually sitting in that next seat
+    const nextPlayer = Object.keys(gameState.players).find(
+      id => gameState.players[id].seat === nextSeat
+    );
 
     // --- NEW: Detect if Spades just broke ---
     let updatedSpadesBroken = gameState.spadesBroken || false;
@@ -216,6 +224,7 @@ const playCard = async (card, cardIndex) => {
     if (card.suit === '♠' && (!isLeadCard || myHand.every(c => c.suit === '♠'))) {
       updatedSpadesBroken = true;
     }
+
     // ----------------------------------------
 
     await update(ref(db, `rooms/${roomId}`), {
