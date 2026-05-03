@@ -90,6 +90,85 @@ function GameTable() {
     }
   }, [gameState?.currentTrick, isHost, roomId, gameState?.status]);
 
+  // 4. Referee: End of Hand Scoring
+  useEffect(() => {
+    // Only the host calculates the final score to avoid database conflicts
+    if (!isHost || !gameState || gameState.status !== 'tricks') return;
+
+    const players = gameState.players || {};
+    const pIds = Object.keys(players);
+    if (pIds.length !== 4) return;
+
+    // Count total tricks taken by everyone
+    const totalTricks = pIds.reduce((sum, id) => sum + (players[id].tricksTaken || 0), 0);
+
+    // If 13 tricks have been taken AND the last trick has cleared off the felt
+    if (totalTricks === 13 && !gameState.currentTrick) {
+      
+      const calculateTeamScore = (teamLabel, p1Id, p2Id) => {
+        const p1 = players[p1Id];
+        const p2 = players[p2Id];
+        
+        let scoreChange = 0;
+        let newBags = 0;
+
+        // 1. Check Nils (Worth 50 points)
+        const checkNil = (p) => {
+          if (p.bid === 0) {
+            if (p.tricksTaken === 0) scoreChange += 50; // Successful Nil
+            else scoreChange -= 50; // Failed Nil
+          }
+        };
+        checkNil(p1);
+        checkNil(p2);
+
+        // 2. Calculate Standard Bids (Ignoring Nil bids for the total required)
+        const teamBid = (p1.bid === 0 ? 0 : p1.bid) + (p2.bid === 0 ? 0 : p2.bid);
+        const teamTricks = p1.tricksTaken + p2.tricksTaken; // All tricks pool for the team
+
+        if (teamTricks < teamBid) {
+          // Set!
+          scoreChange -= (teamBid * 10);
+        } else {
+          // Made it!
+          scoreChange += (teamBid * 10);
+          newBags = teamTricks - teamBid;
+        }
+
+        // 3. Apply changes to current score
+        let currentTotal = gameState.scores[teamLabel].total + scoreChange;
+        let currentBags = gameState.scores[teamLabel].bags + newBags;
+
+        // 4. Bag Penalty (5 bags = -50 points)
+        if (currentBags >= 5) {
+          currentTotal -= 50;
+          currentBags = currentBags % 5; // Keep the remainder
+        }
+
+        return { total: currentTotal, bags: currentBags };
+      };
+
+      // Find who is on which team
+      const teamAIds = pIds.filter(id => players[id].team === 'A'); // North & South
+      const teamBIds = pIds.filter(id => players[id].team === 'B'); // East & West
+
+      const newScoreA = calculateTeamScore('A', teamAIds[0], teamAIds[1]);
+      const newScoreB = calculateTeamScore('B', teamBIds[0], teamBIds[1]);
+
+      // Check for Game Over (300 points)
+      let nextStatus = 'seated';
+      if (newScoreA.total >= 300 || newScoreB.total >= 300) {
+        nextStatus = 'gameOver';
+      }
+
+      // Update the database
+      update(ref(db, `rooms/${roomId}`), {
+        status: nextStatus,
+        scores: { A: newScoreA, B: newScoreB },
+      });
+    }
+  }, [gameState?.players, gameState?.currentTrick, isHost, roomId, gameState?.status]);
+
   const getPlayerInSeat = (seatName) => {
     if (!gameState || !gameState.players) return null;
     return Object.values(gameState.players).find(p => p.seat === seatName);
@@ -110,9 +189,12 @@ function GameTable() {
 
     await update(ref(db, `rooms/${roomId}`), {
       players: updatedPlayers,
-      status: 'seated' 
+      status: 'seated',
+      scores: {
+        A: { total: 0, bags: 0 }, // North & South
+        B: { total: 0, bags: 0 }  // East & West
+      }
     });
-  };
 
   const dealCards = async () => {
     const suits = ['♠', '♥', '♦', '♣'];
@@ -278,6 +360,31 @@ const playCard = async (card, cardIndex) => {
         <h2>Room: <span style={{ color: '#0066cc' }}>{roomId}</span></h2>
         <button onClick={() => navigate('/')} style={{ padding: '0.5rem 1rem', backgroundColor: '#dc3545', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>Leave</button>
       </div>
+{/* Scoreboard */}
+      {gameState.scores && (
+        <div style={{ display: 'flex', justifyContent: 'center', gap: '2rem', marginBottom: '2rem' }}>
+          <div style={{ padding: '1rem 2rem', backgroundColor: '#e3f2fd', border: '2px solid #2196f3', borderRadius: '8px', minWidth: '150px' }}>
+            <h4 style={{ margin: '0 0 0.5rem 0', color: '#1565c0' }}>Team A (N/S)</h4>
+            <div style={{ fontSize: '1.5rem', fontWeight: 'bold' }}>{gameState.scores.A.total}</div>
+            <div style={{ fontSize: '0.9rem', color: '#555' }}>Bags: {gameState.scores.A.bags} / 5</div>
+          </div>
+          <div style={{ padding: '1rem 2rem', backgroundColor: '#fce4ec', border: '2px solid #e91e63', borderRadius: '8px', minWidth: '150px' }}>
+            <h4 style={{ margin: '0 0 0.5rem 0', color: '#c2185b' }}>Team B (E/W)</h4>
+            <div style={{ fontSize: '1.5rem', fontWeight: 'bold' }}>{gameState.scores.B.total}</div>
+            <div style={{ fontSize: '0.9rem', color: '#555' }}>Bags: {gameState.scores.B.bags} / 5</div>
+          </div>
+        </div>
+      )}
+
+      {/* Game Over Screen */}
+      {gameState.status === 'gameOver' && (
+        <div style={{ padding: '2rem', backgroundColor: '#fff3cd', border: '2px solid #ffc107', borderRadius: '8px', marginBottom: '2rem' }}>
+          <h2 style={{ color: '#856404', margin: 0 }}>Game Over!</h2>
+          <p style={{ fontSize: '1.2rem' }}>
+            {gameState.scores.A.total > gameState.scores.B.total ? "Team A (North/South)" : "Team B (East/West)"} Wins!
+          </p>
+        </div>
+      )}
 
       {gameState.status === 'waiting' ? (
         <div style={{ padding: '2rem', backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #ccc', boxShadow: '0 4px 6px rgba(0,0,0,0.05)' }}>
