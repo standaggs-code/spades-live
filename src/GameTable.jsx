@@ -12,16 +12,20 @@ function GameTable() {
 
   const isHost = playerId === 'player1';
 
-  // 1. Core Database Listener
+ // 1. Core Database Listener
   useEffect(() => {
     const roomRef = ref(db, `rooms/${roomId}`);
     const unsubscribe = onValue(roomRef, (snapshot) => {
       if (snapshot.exists()) {
         setGameState(snapshot.val());
+      } else {
+        // THE FIX: If the room doesn't exist, boot them to the lobby!
+        alert("This room no longer exists. Let's get you back to the lobby.");
+        navigate('/');
       }
     });
     return () => off(roomRef, 'value', unsubscribe);
-  }, [roomId]);
+  }, [roomId, navigate]);
 
   // 2. Referee: Detect when all bids are in
   useEffect(() => {
