@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams, useSearchParams, useNavigate } from 'react-router-dom';
-import { ref, onValue, off, update } from 'firebase/database';
+import { ref, onValue, off, update, get } from 'firebase/database';
 import { db } from './firebase';
 
 function GameTable() {
@@ -141,6 +141,34 @@ function GameTable() {
       let nextStatus = 'seated';
       if (newScoreA.total >= 300 || newScoreB.total >= 300) {
         nextStatus = 'gameOver';
+
+        // --- NEW: Global Leaderboard Record ---
+        // The host triggers this exactly once when the game officially ends
+        if (isHost && gameState.status === 'tricks') {
+          const winningTeam = newScoreA.total >= 30 ? 'A' : 'B';
+          const losingTeam = winningTeam === 'A' ? 'B' : 'A';
+
+          const winners = Object.values(players).filter(p => p.team === winningTeam);
+          const losers = Object.values(players).filter(p => p.team === losingTeam);
+
+          // Fetch the current global board, update it, and save it back
+          get(ref(db, 'leaderboard')).then(snapshot => {
+            const board = snapshot.exists() ? snapshot.val() : {};
+
+            winners.forEach(w => {
+              if (!board[w.name]) board[w.name] = { wins: 0, losses: 0 };
+              board[w.name].wins += 1;
+            });
+
+            losers.forEach(l => {
+              if (!board[l.name]) board[l.name] = { wins: 0, losses: 0 };
+              board[l.name].losses += 1;
+            });
+
+            update(ref(db), { leaderboard: board });
+          });
+        }
+        // --------------------------------------
       }
 
       // Generate the Scorepad Log
