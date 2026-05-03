@@ -154,7 +154,8 @@ function GameTable() {
 
     await update(ref(db, `rooms/${roomId}`), {
       status: 'playing',
-      players: updatedPlayers
+      players: updatedPlayers,
+      spadesBroken: false
     });
   };
 
@@ -163,35 +164,39 @@ function GameTable() {
     await update(playerRef, { bid: bidValue });
   };
 
-  const playCard = async (card, cardIndex) => {
-    // 1. Check if it's their turn
+const playCard = async (card, cardIndex) => {
     if (gameState.currentTurn !== playerId) return alert("Wait your turn!");
 
-    // FORCE FIREBASE DATA INTO AN ARRAY
     const currentTrickArray = gameState.currentTrick ? Object.values(gameState.currentTrick) : [];
+    const myHand = gameState.players[playerId].hand;
+    const isLeadCard = currentTrickArray.length === 0;
 
-    // --- NEW: Follow Suit Validation ---
-    if (currentTrickArray.length > 0) {
+    // --- NEW: Breaking Spades Validation ---
+    if (isLeadCard && card.suit === '♠' && !gameState.spadesBroken) {
+      // Check if they ONLY have Spades left
+      const onlyHasSpades = myHand.every(c => c.suit === '♠');
+      
+      if (!onlyHasSpades) {
+        return alert("Spades have not been broken yet! You must lead with another suit.");
+      }
+    }
+    // ---------------------------------------
+
+    // --- EXISTING: Follow Suit Validation ---
+    if (!isLeadCard) {
       const leadSuit = currentTrickArray[0].card.suit;
-      const myHand = gameState.players[playerId].hand;
-
-      // If the card they clicked doesn't match the lead suit...
       if (card.suit !== leadSuit) {
-        // ...check if they actually HAVE the lead suit in their hand
         const hasLeadSuit = myHand.some(c => c.suit === leadSuit);
-        
         if (hasLeadSuit) {
           return alert(`You must follow suit! Please play a ${leadSuit}.`);
         }
       }
     }
-    // -----------------------------------
+    // ----------------------------------------
 
-    // 2. Remove card from hand
-    const updatedHand = [...gameState.players[playerId].hand];
+    const updatedHand = [...myHand];
     updatedHand.splice(cardIndex, 1); 
 
-    // 3. Add card to trick
     const newTrickMove = {
       playerId: playerId,
       card: card,
@@ -200,16 +205,24 @@ function GameTable() {
 
     const updatedTrick = [...currentTrickArray, newTrickMove];
 
-    // 4. Pass the turn
     const turnOrder = ['player1', 'player2', 'player3', 'player4'];
     const currentIndex = turnOrder.indexOf(playerId);
     const nextPlayer = turnOrder[(currentIndex + 1) % 4];
 
-    // 5. Update Firebase
+    // --- NEW: Detect if Spades just broke ---
+    let updatedSpadesBroken = gameState.spadesBroken || false;
+    // If they play a Spade and it's not the lead card (they are cutting) 
+    // OR they legally led with a Spade because it's all they had left
+    if (card.suit === '♠' && (!isLeadCard || myHand.every(c => c.suit === '♠'))) {
+      updatedSpadesBroken = true;
+    }
+    // ----------------------------------------
+
     await update(ref(db, `rooms/${roomId}`), {
       [`players/${playerId}/hand`]: updatedHand,
       currentTrick: updatedTrick,
-      currentTurn: nextPlayer
+      currentTurn: nextPlayer,
+      spadesBroken: updatedSpadesBroken // <-- Save the broken status
     });
   };
 
