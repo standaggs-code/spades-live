@@ -473,8 +473,7 @@ function GameTable() {
               <div key={index} style={{
                 position: 'absolute', width: '60px', height: '84px', backgroundColor: '#fff', 
                 border: '1px solid #ccc', borderRadius: '6px', display: 'flex', flexDirection: 'column', 
-                justifyContent: 'space-between', padding: '4px', boxSizing: 'border-box',
-                fontWeight: 'bold', zIndex: 10,
+                padding: '4px', boxSizing: 'border-box', fontWeight: 'bold', zIndex: 10,
                 color: move.card.displaySuit === '♥' || move.card.displaySuit === '♦' ? '#d32f2f' : '#111',
                 boxShadow: '2px 4px 8px rgba(0,0,0,0.4)',
                 transform: 
@@ -482,6 +481,27 @@ function GameTable() {
                   move.seat === 'South' ? 'translateY(55px)' : 
                   move.seat === 'East' ? 'translateX(65px)' : 'translateX(-65px)'
               }}>
+                {/* Top Left Index */}
+                <div style={{ fontSize: '0.8rem', lineHeight: '1', textAlign: 'left', position: 'absolute', top: '4px', left: '4px' }}>
+                  <div>{move.card.value === 'LJ' || move.card.value === 'BJ' ? '' : move.card.value}</div>
+                  <div>{move.card.displaySuit}</div>
+                </div>
+                
+                {/* MASSIVE CENTER ID */}
+                <div style={{ height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+                  {move.card.value === 'LJ' ? (
+                    <div style={{ fontSize: '2rem', lineHeight: '1', textAlign: 'center' }}>🃏<div style={{fontSize: '0.6rem'}}>LITTLE</div></div>
+                  ) : move.card.value === 'BJ' ? (
+                    <div style={{ fontSize: '2rem', lineHeight: '1', textAlign: 'center' }}>🃏<div style={{fontSize: '0.6rem'}}>BIG</div></div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', marginTop: '4px' }}>
+                      <span style={{ fontSize: '1.6rem', fontWeight: '900', lineHeight: '0.9' }}>{move.card.value}</span>
+                      <span style={{ fontSize: '2rem', lineHeight: '0.9' }}>{move.card.displaySuit}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            
                 {/* Top Left Index */}
                 <div style={{ fontSize: '0.8rem', lineHeight: '1', textAlign: 'left' }}>
                   <div>{move.card.value}</div>
@@ -584,14 +604,28 @@ function GameTable() {
                   }}
                 >
                   {/* Top Left Index */}
-                  <div style={{ fontSize: '0.85rem', lineHeight: '1', textAlign: 'left' }}>
-                    <div>{card.value}</div>
+                  <div style={{ fontSize: '0.85rem', lineHeight: '1', textAlign: 'left', position: 'absolute', top: '4px', left: '4px' }}>
+                    <div>{card.value === 'LJ' || card.value === 'BJ' ? '' : card.value}</div>
                     <div>{card.displaySuit}</div>
                   </div>
+
+                  {/* MASSIVE CENTER ID */}
+                  <div style={{ height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+                    {card.value === 'LJ' ? (
+                      <div style={{ fontSize: '2rem', lineHeight: '1', textAlign: 'center' }}>🃏<div style={{fontSize: '0.6rem'}}>LITTLE</div></div>
+                    ) : card.value === 'BJ' ? (
+                      <div style={{ fontSize: '2rem', lineHeight: '1', textAlign: 'center' }}>🃏<div style={{fontSize: '0.6rem'}}>BIG</div></div>
+                    ) : (
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', marginTop: '4px' }}>
+                        <span style={{ fontSize: '1.8rem', fontWeight: '900', lineHeight: '0.9' }}>{card.value}</span>
+                        <span style={{ fontSize: '2.2rem', lineHeight: '0.9' }}>{card.displaySuit}</span>
+                      </div>
+                    )}
+                  </div>
                   
-                  {/* Bottom Right Index (Inverted) */}
-                  <div style={{ fontSize: '0.85rem', lineHeight: '1', textAlign: 'right', transform: 'rotate(180deg)' }}>
-                    <div>{card.value}</div>
+                  {/* Bottom Right Index */}
+                  <div style={{ fontSize: '0.85rem', lineHeight: '1', textAlign: 'right', transform: 'rotate(180deg)', position: 'absolute', bottom: '4px', right: '4px' }}>
+                    <div>{card.value === 'LJ' || card.value === 'BJ' ? '' : card.value}</div>
                     <div>{card.displaySuit}</div>
                   </div>
                 </div>
