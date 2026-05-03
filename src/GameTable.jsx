@@ -41,7 +41,6 @@ function GameTable() {
       update(ref(db, `rooms/${roomId}`), { 
         status: 'tricks',
         currentTrick: [] 
-        // We DO NOT set currentTurn here anymore! dealCards already set it to the person left of the dealer.
       });
     }
   }, [gameState, isHost, roomId]);
@@ -133,7 +132,6 @@ function GameTable() {
         return { total: currentTotal, bags: currentBags };
       };
 
-      // ... (keep the calculation logic above this)
       const teamAIds = pIds.filter(id => players[id].team === 'A'); 
       const teamBIds = pIds.filter(id => players[id].team === 'B'); 
 
@@ -145,10 +143,8 @@ function GameTable() {
         nextStatus = 'gameOver';
       }
 
-      // --- NEW: Generate the Scorepad Log ---
+      // Generate the Scorepad Log
       const currentRound = (gameState.history ? gameState.history.length : 0) + 1;
-      
-      // Helper to format bids (shows "Nil" instead of 0)
       const getBidStr = (pId) => players[pId].bid === 0 ? 'NIL' : players[pId].bid;
       
       const roundLog = {
@@ -168,15 +164,15 @@ function GameTable() {
       };
 
       const updatedHistory = gameState.history ? [...gameState.history, roundLog] : [roundLog];
-      // --------------------------------------
 
       update(ref(db, `rooms/${roomId}`), {
         status: nextStatus,
         scores: { A: newScoreA, B: newScoreB },
-        history: updatedHistory // <-- Save the ledger!
+        history: updatedHistory
       });
     }
-  }, [gameState?.players, gameState?.currentTrick, isHost, roomId, gameState?.status, gameState?.scores, gameState?.history]); 
+  }, [gameState?.players, gameState?.currentTrick, isHost, roomId, gameState?.status, gameState?.scores, gameState?.history]);
+
 
   const getPlayerInSeat = (seatName) => {
     if (!gameState || !gameState.players) return null;
@@ -199,7 +195,7 @@ function GameTable() {
     await update(ref(db, `rooms/${roomId}`), {
       players: updatedPlayers,
       status: 'seated',
-      dealer: 'player4', // Arbitrary start so player1 becomes the first real dealer
+      dealer: 'player4', 
       scores: { A: { total: 0, bags: 0 }, B: { total: 0, bags: 0 } },
       history: []
     });
@@ -278,7 +274,6 @@ function GameTable() {
       cardIndex += 13;
     });
 
-    // Determine Dealer & Next Turn Clockwise
     const currentDealerId = gameState.dealer || 'player4';
     const currentDealerSeat = updatedPlayers[currentDealerId].seat;
     const clockwiseOrder = ['North', 'East', 'South', 'West'];
@@ -295,15 +290,14 @@ function GameTable() {
       players: updatedPlayers,
       spadesBroken: false,
       dealer: newDealerId,
-      currentBidder: firstPlayerId, // Left of dealer bids first
-      currentTurn: firstPlayerId    // Left of dealer plays first
+      currentBidder: firstPlayerId, 
+      currentTurn: firstPlayerId    
     });
   };
 
   const submitBid = async (bidValue) => {
     if (gameState.currentBidder !== playerId) return alert("Wait your turn to bid!");
 
-    // Advance the bidder clockwise
     const currentSeat = gameState.players[playerId].seat;
     const clockwiseOrder = ['North', 'East', 'South', 'West'];
     const currentSeatIndex = clockwiseOrder.indexOf(currentSeat);
@@ -381,7 +375,6 @@ function GameTable() {
         border: occupant ? '2px solid #2E7D32' : '2px dashed #999',
         position: 'relative'
       }}>
-        {/* Dealer Button Badge */}
         {gameState.dealer === occupantId && (
           <div style={{ position: 'absolute', top: '-10px', right: '-10px', backgroundColor: '#ffc107', color: '#000', borderRadius: '50%', width: '24px', height: '24px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '0.8rem', boxShadow: '0 2px 4px rgba(0,0,0,0.2)' }}>
             D
@@ -461,6 +454,7 @@ function GameTable() {
         }}>
           <div style={{ gridColumn: '2' }}><Chair seatName="North" /></div>
           <div style={{ gridColumn: '1' }}><Chair seatName="West" /></div>
+          
           <div style={{ 
             gridColumn: '2', width: '100%', height: '220px', 
             background: 'radial-gradient(circle, #2E7D32 0%, #1b4b1e 100%)', 
@@ -481,13 +475,10 @@ function GameTable() {
                   move.seat === 'South' ? 'translateY(55px)' : 
                   move.seat === 'East' ? 'translateX(65px)' : 'translateX(-65px)'
               }}>
-                {/* Top Left Index */}
                 <div style={{ fontSize: '0.8rem', lineHeight: '1', textAlign: 'left', position: 'absolute', top: '4px', left: '4px' }}>
                   <div>{move.card.value === 'LJ' || move.card.value === 'BJ' ? '' : move.card.value}</div>
                   <div>{move.card.displaySuit}</div>
                 </div>
-                
-                {/* MASSIVE CENTER ID */}
                 <div style={{ height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
                   {move.card.value === 'LJ' ? (
                     <div style={{ fontSize: '2rem', lineHeight: '1', textAlign: 'center' }}>🃏<div style={{fontSize: '0.6rem'}}>LITTLE</div></div>
@@ -501,17 +492,6 @@ function GameTable() {
                   )}
                 </div>
               </div>
-            
-                {/* Top Left Index */}
-                <div style={{ fontSize: '0.8rem', lineHeight: '1', textAlign: 'left' }}>
-                  <div>{move.card.value}</div>
-                  <div>{move.card.displaySuit}</div>
-                </div>
-                {/* Center Suit */}
-                <div style={{ fontSize: '1.5rem', textAlign: 'center', marginTop: '-10px' }}>
-                  {move.card.displaySuit}
-                </div>
-              </div>
             ))}
             
             {gameState.status === 'tricks' && (gameState.currentTrick ? Object.keys(gameState.currentTrick).length : 0) < 4 && (
@@ -520,6 +500,7 @@ function GameTable() {
               </div>
             )}
           </div>
+
           <div style={{ gridColumn: '3' }}><Chair seatName="East" /></div>
           <div style={{ gridColumn: '2' }}><Chair seatName="South" /></div>
         </div>
@@ -533,7 +514,6 @@ function GameTable() {
         </div>
       )}
 
-      {/* Sequential Bidding UI */}
       {gameState.status === 'playing' && gameState.players?.[playerId] && (
         <div style={{ marginTop: '2rem', padding: '1.5rem', backgroundColor: '#fff', borderRadius: '8px', border: '2px solid #007bff' }}>
           {gameState.currentBidder === playerId ? (
@@ -557,20 +537,16 @@ function GameTable() {
         </div>
       )}
 
-{/* My Hand - Handheld Optimized Arc */}
       {gameState.players?.[playerId]?.hand && (
         <div style={{ marginTop: '2rem', padding: '1.5rem', backgroundColor: '#f0f2f5', borderRadius: '12px', border: '1px solid #ddd', boxShadow: '0 4px 12px rgba(0,0,0,0.05)' }}>
           <h3 style={{ margin: '0 0 1rem 0', color: '#333' }}>My Hand</h3>
-          
           <div style={{ position: 'relative', height: '140px', width: '100%', display: 'flex', justifyContent: 'center' }}>
             {gameState.players[playerId].hand.map((card, idx) => {
               const totalCards = gameState.players[playerId].hand.length;
               const middleIndex = (totalCards - 1) / 2;
               const offsetFromCenter = idx - middleIndex;
-              
-              // Math to create the fan effect
-              const rotation = offsetFromCenter * 4; // degrees to tilt
-              const translateY = Math.abs(offsetFromCenter) * 3; // pixels to push down
+              const rotation = offsetFromCenter * 4; 
+              const translateY = Math.abs(offsetFromCenter) * 3; 
               const isMyTurn = gameState.currentTurn === playerId && gameState.status === 'tricks';
 
               return (
@@ -589,7 +565,6 @@ function GameTable() {
                     boxShadow: '-2px 4px 8px rgba(0,0,0,0.2)',
                     cursor: isMyTurn ? 'pointer' : 'default',
                     zIndex: idx,
-                    // Apply the arc positioning
                     transform: `translateX(${offsetFromCenter * 25}px) translateY(${translateY}px) rotate(${rotation}deg)`,
                     transformOrigin: 'bottom center',
                     transition: 'transform 0.2s cubic-bezier(0.25, 0.8, 0.25, 1), z-index 0.2s',
@@ -603,13 +578,11 @@ function GameTable() {
                     e.currentTarget.style.zIndex = idx; 
                   }}
                 >
-                  {/* Top Left Index */}
                   <div style={{ fontSize: '0.85rem', lineHeight: '1', textAlign: 'left', position: 'absolute', top: '4px', left: '4px' }}>
                     <div>{card.value === 'LJ' || card.value === 'BJ' ? '' : card.value}</div>
                     <div>{card.displaySuit}</div>
                   </div>
 
-                  {/* MASSIVE CENTER ID */}
                   <div style={{ height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
                     {card.value === 'LJ' ? (
                       <div style={{ fontSize: '2rem', lineHeight: '1', textAlign: 'center' }}>🃏<div style={{fontSize: '0.6rem'}}>LITTLE</div></div>
@@ -623,7 +596,6 @@ function GameTable() {
                     )}
                   </div>
                   
-                  {/* Bottom Right Index */}
                   <div style={{ fontSize: '0.85rem', lineHeight: '1', textAlign: 'right', transform: 'rotate(180deg)', position: 'absolute', bottom: '4px', right: '4px' }}>
                     <div>{card.value === 'LJ' || card.value === 'BJ' ? '' : card.value}</div>
                     <div>{card.displaySuit}</div>
@@ -634,7 +606,8 @@ function GameTable() {
           </div>
         </div>
       )}
-{/* The Scorepad Ledger */}
+
+      {/* The Scorepad Ledger */}
       {gameState.history && gameState.history.length > 0 && (
         <div style={{ marginTop: '3rem', backgroundColor: '#fff', borderRadius: '12px', padding: '1.5rem', border: '1px solid #ccc', boxShadow: '0 4px 12px rgba(0,0,0,0.05)', overflowX: 'auto' }}>
           <h3 style={{ margin: '0 0 1rem 0', color: '#333', textAlign: 'left' }}>Match Ledger</h3>
@@ -666,8 +639,6 @@ function GameTable() {
           </table>
         </div>
       )}
-
-      
     </div>
   );
 }
