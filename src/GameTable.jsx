@@ -492,33 +492,70 @@ function GameTable() {
         </div>
       )}
 
+{/* My Hand - Handheld Optimized Arc */}
       {gameState.players?.[playerId]?.hand && (
-        <div style={{ marginTop: '2rem', padding: '1.5rem', backgroundColor: '#fff', borderRadius: '8px', border: '1px solid #ccc' }}>
-          <h3>My Hand</h3>
-          <div style={{ display: 'flex', justifyContent: 'center', marginTop: '1rem', overflowX: 'auto', paddingBottom: '1rem', paddingTop: '1rem' }}>
-            {gameState.players[playerId].hand.map((card, idx) => (
-              <div 
-                key={idx} 
-                onClick={() => gameState.status === 'tricks' && playCard(card, idx)}
-                style={{ 
-                  width: '60px', height: '90px', padding: '0.5rem', borderRadius: '6px',
-                  border: gameState.currentTurn === playerId ? '2px solid #ffc107' : '1px solid #999',
-                  color: card.displaySuit === '♥' || card.displaySuit === '♦' ? '#d32f2f' : '#000',
-                  backgroundColor: '#fff', fontSize: '1.4rem', fontWeight: 'bold',
-                  marginLeft: idx === 0 ? '0' : '-1.8rem', position: 'relative', zIndex: idx, 
-                  transition: 'transform 0.2s', cursor: gameState.currentTurn === playerId ? 'pointer' : 'default', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-                  boxShadow: '-3px 0 5px rgba(0,0,0,0.15)'
-                }}
-                onMouseEnter={(e) => { e.currentTarget.style.transform = 'translateY(-20px)'; e.currentTarget.style.zIndex = '50'; }}
-                onMouseLeave={(e) => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.zIndex = idx; }}
-              >
-                <div style={{ lineHeight: '1' }}>{card.value}</div>
-                <div style={{ lineHeight: '1' }}>{card.displaySuit}</div>
-              </div>
-            ))}
+        <div style={{ marginTop: '2rem', padding: '1.5rem', backgroundColor: '#f0f2f5', borderRadius: '12px', border: '1px solid #ddd', boxShadow: '0 4px 12px rgba(0,0,0,0.05)' }}>
+          <h3 style={{ margin: '0 0 1rem 0', color: '#333' }}>My Hand</h3>
+          
+          <div style={{ position: 'relative', height: '140px', width: '100%', display: 'flex', justifyContent: 'center' }}>
+            {gameState.players[playerId].hand.map((card, idx) => {
+              const totalCards = gameState.players[playerId].hand.length;
+              const middleIndex = (totalCards - 1) / 2;
+              const offsetFromCenter = idx - middleIndex;
+              
+              // Math to create the fan effect
+              const rotation = offsetFromCenter * 4; // degrees to tilt
+              const translateY = Math.abs(offsetFromCenter) * 3; // pixels to push down
+              const isMyTurn = gameState.currentTurn === playerId && gameState.status === 'tricks';
+
+              return (
+                <div 
+                  key={idx} 
+                  onClick={() => isMyTurn && playCard(card, idx)}
+                  style={{ 
+                    position: 'absolute',
+                    width: '65px', height: '95px', padding: '4px', boxSizing: 'border-box',
+                    borderRadius: '8px',
+                    border: isMyTurn ? '2px solid #ffc107' : '1px solid #ccc',
+                    backgroundColor: '#fff', 
+                    color: card.displaySuit === '♥' || card.displaySuit === '♦' ? '#d32f2f' : '#111',
+                    display: 'flex', flexDirection: 'column', justifyContent: 'space-between',
+                    fontWeight: 'bold',
+                    boxShadow: '-2px 4px 8px rgba(0,0,0,0.2)',
+                    cursor: isMyTurn ? 'pointer' : 'default',
+                    zIndex: idx,
+                    // Apply the arc positioning
+                    transform: `translateX(${offsetFromCenter * 25}px) translateY(${translateY}px) rotate(${rotation}deg)`,
+                    transformOrigin: 'bottom center',
+                    transition: 'transform 0.2s cubic-bezier(0.25, 0.8, 0.25, 1), z-index 0.2s',
+                  }}
+                  onMouseEnter={(e) => { 
+                    e.currentTarget.style.transform = `translateX(${offsetFromCenter * 25}px) translateY(${translateY - 20}px) rotate(${rotation}deg)`; 
+                    e.currentTarget.style.zIndex = '50'; 
+                  }}
+                  onMouseLeave={(e) => { 
+                    e.currentTarget.style.transform = `translateX(${offsetFromCenter * 25}px) translateY(${translateY}px) rotate(${rotation}deg)`; 
+                    e.currentTarget.style.zIndex = idx; 
+                  }}
+                >
+                  {/* Top Left Index */}
+                  <div style={{ fontSize: '0.85rem', lineHeight: '1', textAlign: 'left' }}>
+                    <div>{card.value}</div>
+                    <div>{card.displaySuit}</div>
+                  </div>
+                  
+                  {/* Bottom Right Index (Inverted) */}
+                  <div style={{ fontSize: '0.85rem', lineHeight: '1', textAlign: 'right', transform: 'rotate(180deg)' }}>
+                    <div>{card.value}</div>
+                    <div>{card.displaySuit}</div>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
+      
     </div>
   );
 }
