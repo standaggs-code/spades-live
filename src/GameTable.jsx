@@ -40,8 +40,8 @@ function GameTable() {
     if (allBid) {
       update(ref(db, `rooms/${roomId}`), { 
         status: 'tricks',
-        currentTurn: 'player1', // Host leads first trick
         currentTrick: [] 
+        // We DO NOT set currentTurn here anymore! dealCards already set it to the person left of the dealer.
       });
     }
   }, [gameState, isHost, roomId]);
@@ -96,17 +96,13 @@ function GameTable() {
 
     const totalTricks = pIds.reduce((sum, id) => sum + (players[id].tricksTaken || 0), 0);
 
-    // If 13 tricks are done and the table is clear
     if (totalTricks === 13 && !gameState.currentTrick) {
-      
       const calculateTeamScore = (teamLabel, p1Id, p2Id) => {
         const p1 = players[p1Id];
         const p2 = players[p2Id];
-        
         let scoreChange = 0;
         let newBags = 0;
 
-        // Check Nils (Worth 50 points)
         const checkNil = (p) => {
           if (p.bid === 0) {
             if (p.tricksTaken === 0) scoreChange += 50; 
@@ -116,21 +112,19 @@ function GameTable() {
         checkNil(p1);
         checkNil(p2);
 
-        // Standard Bids
         const teamBid = (p1.bid === 0 ? 0 : p1.bid) + (p2.bid === 0 ? 0 : p2.bid);
         const teamTricks = p1.tricksTaken + p2.tricksTaken;
 
         if (teamTricks < teamBid) {
-          scoreChange -= (teamBid * 10); // Set
+          scoreChange -= (teamBid * 10); 
         } else {
-          scoreChange += (teamBid * 10); // Made it
+          scoreChange += (teamBid * 10); 
           newBags = teamTricks - teamBid;
         }
 
         let currentTotal = gameState.scores[teamLabel].total + scoreChange;
         let currentBags = gameState.scores[teamLabel].bags + newBags;
 
-        // 5-Bag Penalty
         if (currentBags >= 5) {
           currentTotal -= 50;
           currentBags = currentBags % 5;
@@ -179,22 +173,35 @@ function GameTable() {
     await update(ref(db, `rooms/${roomId}`), {
       players: updatedPlayers,
       status: 'seated',
-      scores: {
-        A: { total: 0, bags: 0 }, 
-        B: { total: 0, bags: 0 }  
-      }
+      dealer: 'player4', // Arbitrary start so player1 becomes the first real dealer
+      scores: { A: { total: 0, bags: 0 }, B: { total: 0, bags: 0 } }
     });
   };
 
-const dealCards = async () => {
+  const playAgain = async () => {
+    const updatedPlayers = { ...gameState.players };
+    Object.keys(updatedPlayers).forEach(key => {
+      delete updatedPlayers[key].hand;
+      delete updatedPlayers[key].bid;
+      updatedPlayers[key].tricksTaken = 0;
+    });
+
+    await update(ref(db, `rooms/${roomId}`), {
+      status: 'seated',
+      scores: { A: { total: 0, bags: 0 }, B: { total: 0, bags: 0 } },
+      players: updatedPlayers,
+      currentTrick: null,
+      spadesBroken: false
+    });
+  };
+
+  const dealCards = async () => {
     const suits = ['♠', '♥', '♦', '♣'];
     const values = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A'];
     let deck = [];
     
-    // 1. Build the base deck
     for (const suit of suits) {
       for (const value of values) {
-        // Remove the 2 of Hearts and 2 of Clubs to make room for Jokers
         if (value === '2' && (suit === '♥' || suit === '♣')) continue;
 
         let weight = parseInt(value);
@@ -206,29 +213,21 @@ const dealCards = async () => {
         let finalSuit = suit;
         let displaySuit = suit;
 
-        // 2. JJDD Upgrades! 
         if (value === '2' && suit === '♠') {
-          weight = 15; // Better than the Ace
+          weight = 15; 
         } else if (value === '2' && suit === '♦') {
-          weight = 16; // Better than the 2 of Spades
-          finalSuit = '♠'; // Treat it as a Spade under the hood!
-          displaySuit = '♦'; // But still show the red diamond on the card
+          weight = 16; 
+          finalSuit = '♠'; 
+          displaySuit = '♦'; 
         }
 
-        deck.push({ 
-          suit: finalSuit,      // Used by the logic
-          displaySuit: displaySuit, // Used by the UI
-          value: value, 
-          weight: weight 
-        });
+        deck.push({ suit: finalSuit, displaySuit: displaySuit, value: value, weight: weight });
       }
     }
 
-    // 3. Add the Jokers (acting as the highest Spades)
     deck.push({ suit: '♠', displaySuit: '🃏', value: 'LJ', weight: 17 });
     deck.push({ suit: '♠', displaySuit: '🃏', value: 'BJ', weight: 18 });
 
-    // Shuffle...
     for (let i = deck.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
       [deck[i], deck[j]] = [deck[j], deck[i]];
@@ -239,7 +238,6 @@ const dealCards = async () => {
     
     Object.keys(updatedPlayers).forEach(key => {
       const hand = deck.slice(cardIndex, cardIndex + 13);
-      // Sort hands: Spades on the left, then by weight
       hand.sort((a, b) => {
           if (a.suit === '♠' && b.suit !== '♠') return -1;
           if (b.suit === '♠' && a.suit !== '♠') return 1;
@@ -252,16 +250,42 @@ const dealCards = async () => {
       cardIndex += 13;
     });
 
+    // Determine Dealer & Next Turn Clockwise
+    const currentDealerId = gameState.dealer || 'player4';
+    const currentDealerSeat = updatedPlayers[currentDealerId].seat;
+    const clockwiseOrder = ['North', 'East', 'South', 'West'];
+    
+    const currentDealerIndex = clockwiseOrder.indexOf(currentDealerSeat);
+    const newDealerSeat = clockwiseOrder[(currentDealerIndex + 1) % 4];
+    const newDealerId = Object.keys(updatedPlayers).find(id => updatedPlayers[id].seat === newDealerSeat);
+    
+    const firstPlayerSeat = clockwiseOrder[(currentDealerIndex + 2) % 4]; 
+    const firstPlayerId = Object.keys(updatedPlayers).find(id => updatedPlayers[id].seat === firstPlayerSeat);
+
     await update(ref(db, `rooms/${roomId}`), {
       status: 'playing',
       players: updatedPlayers,
-      spadesBroken: false
+      spadesBroken: false,
+      dealer: newDealerId,
+      currentBidder: firstPlayerId, // Left of dealer bids first
+      currentTurn: firstPlayerId    // Left of dealer plays first
     });
   };
 
   const submitBid = async (bidValue) => {
-    const playerRef = ref(db, `rooms/${roomId}/players/${playerId}`);
-    await update(playerRef, { bid: bidValue });
+    if (gameState.currentBidder !== playerId) return alert("Wait your turn to bid!");
+
+    // Advance the bidder clockwise
+    const currentSeat = gameState.players[playerId].seat;
+    const clockwiseOrder = ['North', 'East', 'South', 'West'];
+    const currentSeatIndex = clockwiseOrder.indexOf(currentSeat);
+    const nextSeat = clockwiseOrder[(currentSeatIndex + 1) % 4];
+    const nextPlayerId = Object.keys(gameState.players).find(id => gameState.players[id].seat === nextSeat);
+
+    await update(ref(db, `rooms/${roomId}`), {
+      [`players/${playerId}/bid`]: bidValue,
+      currentBidder: nextPlayerId
+    });
   };
 
   const playCard = async (card, cardIndex) => {
@@ -271,7 +295,6 @@ const dealCards = async () => {
     const myHand = gameState.players[playerId].hand;
     const isLeadCard = currentTrickArray.length === 0;
 
-    // Breaking Spades Validation
     if (isLeadCard && card.suit === '♠' && !gameState.spadesBroken) {
       const onlyHasSpades = myHand.every(c => c.suit === '♠');
       if (!onlyHasSpades) {
@@ -279,7 +302,6 @@ const dealCards = async () => {
       }
     }
 
-    // Follow Suit Validation
     if (!isLeadCard) {
       const leadSuit = currentTrickArray[0].card.suit;
       if (card.suit !== leadSuit) {
@@ -293,23 +315,14 @@ const dealCards = async () => {
     const updatedHand = [...myHand];
     updatedHand.splice(cardIndex, 1); 
 
-    const newTrickMove = {
-      playerId: playerId,
-      card: card,
-      seat: gameState.players[playerId].seat
-    };
-
+    const newTrickMove = { playerId: playerId, card: card, seat: gameState.players[playerId].seat };
     const updatedTrick = [...currentTrickArray, newTrickMove];
 
-    // Clockwise Turn Passing
     const currentSeat = gameState.players[playerId].seat;
     const clockwiseOrder = ['North', 'East', 'South', 'West'];
     const currentSeatIndex = clockwiseOrder.indexOf(currentSeat);
     const nextSeat = clockwiseOrder[(currentSeatIndex + 1) % 4];
-    
-    const nextPlayer = Object.keys(gameState.players).find(
-      id => gameState.players[id].seat === nextSeat
-    );
+    const nextPlayer = Object.keys(gameState.players).find(id => gameState.players[id].seat === nextSeat);
 
     let updatedSpadesBroken = gameState.spadesBroken || false;
     if (card.suit === '♠' && (!isLeadCard || myHand.every(c => c.suit === '♠'))) {
@@ -328,6 +341,8 @@ const dealCards = async () => {
 
   const Chair = ({ seatName }) => {
     const occupant = getPlayerInSeat(seatName);
+    const occupantId = Object.keys(gameState.players || {}).find(key => gameState.players[key].seat === seatName);
+
     return (
       <div style={{
         padding: '1rem',
@@ -338,23 +353,19 @@ const dealCards = async () => {
         border: occupant ? '2px solid #2E7D32' : '2px dashed #999',
         position: 'relative'
       }}>
+        {/* Dealer Button Badge */}
+        {gameState.dealer === occupantId && (
+          <div style={{ position: 'absolute', top: '-10px', right: '-10px', backgroundColor: '#ffc107', color: '#000', borderRadius: '50%', width: '24px', height: '24px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '0.8rem', boxShadow: '0 2px 4px rgba(0,0,0,0.2)' }}>
+            D
+          </div>
+        )}
         <div style={{ fontSize: '0.8rem', textTransform: 'uppercase', marginBottom: '0.5rem' }}>{seatName}</div>
         <div style={{ fontWeight: 'bold' }}>{occupant ? occupant.name : 'Empty'}</div>
         
         {occupant && occupant.bid !== undefined && (
-          <div style={{ 
-            marginTop: '0.5rem', 
-            backgroundColor: 'rgba(0,0,0,0.2)', 
-            padding: '4px 8px', 
-            borderRadius: '4px',
-            display: 'flex',
-            justifyContent: 'space-between',
-            fontSize: '0.9rem'
-          }}>
+          <div style={{ marginTop: '0.5rem', backgroundColor: 'rgba(0,0,0,0.2)', padding: '4px 8px', borderRadius: '4px', display: 'flex', justifyContent: 'space-between', fontSize: '0.9rem' }}>
             <span>Bid: {occupant.bid === 0 ? 'NIL' : occupant.bid}</span>
-            <span style={{ fontWeight: 'bold', color: '#ffeb3b' }}>
-              Tricks: {occupant.tricksTaken || 0}
-            </span>
+            <span style={{ fontWeight: 'bold', color: '#ffeb3b' }}>Tricks: {occupant.tricksTaken || 0}</span>
           </div>
         )}
       </div>
@@ -368,7 +379,6 @@ const dealCards = async () => {
         <button onClick={() => navigate('/')} style={{ padding: '0.5rem 1rem', backgroundColor: '#dc3545', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>Leave</button>
       </div>
 
-      {/* Scoreboard */}
       {gameState.scores && (
         <div style={{ display: 'flex', justifyContent: 'center', gap: '2rem', marginBottom: '2rem' }}>
           <div style={{ padding: '1rem 2rem', backgroundColor: '#e3f2fd', border: '2px solid #2196f3', borderRadius: '8px', minWidth: '150px' }}>
@@ -384,13 +394,17 @@ const dealCards = async () => {
         </div>
       )}
 
-      {/* Game Over Screen */}
       {gameState.status === 'gameOver' && (
         <div style={{ padding: '2rem', backgroundColor: '#fff3cd', border: '2px solid #ffc107', borderRadius: '8px', marginBottom: '2rem' }}>
           <h2 style={{ color: '#856404', margin: 0 }}>Game Over!</h2>
-          <p style={{ fontSize: '1.2rem' }}>
+          <p style={{ fontSize: '1.2rem', marginBottom: '1.5rem' }}>
             {gameState.scores.A.total > gameState.scores.B.total ? "Team A (North/South)" : "Team B (East/West)"} Wins!
           </p>
+          {isHost && (
+            <button onClick={playAgain} style={{ padding: '0.75rem 1.5rem', backgroundColor: '#28a745', color: 'white', border: 'none', borderRadius: '8px', fontSize: '1.2rem', cursor: 'pointer', fontWeight: 'bold' }}>
+              Play Again (Same Teams)
+            </button>
+          )}
         </div>
       )}
 
@@ -405,12 +419,8 @@ const dealCards = async () => {
               </li>
             ))}
           </ul>
-          
           {isHost && Object.keys(gameState.players || {}).length === 4 && (
-            <button 
-              onClick={randomizeSeats} 
-              style={{ padding: '1rem 2rem', backgroundColor: '#28a745', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '1.2rem', fontWeight: 'bold' }}
-            >
+            <button onClick={randomizeSeats} style={{ padding: '1rem 2rem', backgroundColor: '#28a745', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '1.2rem', fontWeight: 'bold' }}>
               Randomize Seats & Start Game
             </button>
           )}
@@ -429,16 +439,10 @@ const dealCards = async () => {
           }}>
             {(gameState.currentTrick ? Object.values(gameState.currentTrick) : []).map((move, index) => (
               <div key={index} style={{
-                position: 'absolute', width: '50px', height: '75px', backgroundColor: 'white',
-                border: '1px solid #000', borderRadius: '4px', display: 'flex', flexDirection: 'column',
-                alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', zIndex: 10,
-                color: move.card.suit === '♥' || move.card.suit === '♦' ? '#d32f2f' : '#000',
+                position: 'absolute', width: '50px', height: '75px', backgroundColor: 'white', border: '1px solid #000', borderRadius: '4px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', zIndex: 10,
+                color: move.card.displaySuit === '♥' || move.card.displaySuit === '♦' ? '#d32f2f' : '#000',
                 boxShadow: '0 4px 8px rgba(0,0,0,0.4)',
-                transform: 
-                  move.seat === 'North' ? 'translateY(-45px)' :
-                  move.seat === 'South' ? 'translateY(45px)' :
-                  move.seat === 'East' ? 'translateX(45px)' :
-                  'translateX(-45px)'
+                transform: move.seat === 'North' ? 'translateY(-45px)' : move.seat === 'South' ? 'translateY(45px)' : move.seat === 'East' ? 'translateX(45px)' : 'translateX(-45px)'
               }}>
                 <div style={{ lineHeight: '1' }}>{move.card.value}</div>
                 <div style={{ lineHeight: '1' }}>{move.card.displaySuit}</div>
@@ -464,21 +468,27 @@ const dealCards = async () => {
         </div>
       )}
 
-      {gameState.status === 'playing' && gameState.players?.[playerId] && 
-       gameState.players[playerId].bid === undefined && (
+      {/* Sequential Bidding UI */}
+      {gameState.status === 'playing' && gameState.players?.[playerId] && (
         <div style={{ marginTop: '2rem', padding: '1.5rem', backgroundColor: '#fff', borderRadius: '8px', border: '2px solid #007bff' }}>
-          <h3>Place Your Bid</h3>
-          <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'center', flexWrap: 'wrap', marginTop: '1rem' }}>
-            {['Nil', 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13].map((val) => (
-              <button
-                key={val}
-                onClick={() => submitBid(val === 'Nil' ? 0 : val)}
-                style={{ padding: '0.75rem', minWidth: '45px', cursor: 'pointer', backgroundColor: val === 'Nil' ? '#6f42c1' : '#007bff', color: 'white', border: 'none', borderRadius: '4px', fontWeight: 'bold' }}
-              >
-                {val}
-              </button>
-            ))}
-          </div>
+          {gameState.currentBidder === playerId ? (
+            <>
+              <h3>Place Your Bid</h3>
+              <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'center', flexWrap: 'wrap', marginTop: '1rem' }}>
+                {['Nil', 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13].map((val) => (
+                  <button
+                    key={val}
+                    onClick={() => submitBid(val === 'Nil' ? 0 : val)}
+                    style={{ padding: '0.75rem', minWidth: '45px', cursor: 'pointer', backgroundColor: val === 'Nil' ? '#6f42c1' : '#007bff', color: 'white', border: 'none', borderRadius: '4px', fontWeight: 'bold' }}
+                  >
+                    {val}
+                  </button>
+                ))}
+              </div>
+            </>
+          ) : (
+            <h3 style={{ color: '#555' }}>Waiting for {gameState.players[gameState.currentBidder]?.name} to bid...</h3>
+          )}
         </div>
       )}
 
@@ -493,7 +503,7 @@ const dealCards = async () => {
                 style={{ 
                   width: '60px', height: '90px', padding: '0.5rem', borderRadius: '6px',
                   border: gameState.currentTurn === playerId ? '2px solid #ffc107' : '1px solid #999',
-                  color: card.suit === '♥' || card.suit === '♦' ? '#d32f2f' : '#000',
+                  color: card.displaySuit === '♥' || card.displaySuit === '♦' ? '#d32f2f' : '#000',
                   backgroundColor: '#fff', fontSize: '1.4rem', fontWeight: 'bold',
                   marginLeft: idx === 0 ? '0' : '-1.8rem', position: 'relative', zIndex: idx, 
                   transition: 'transform 0.2s', cursor: gameState.currentTurn === playerId ? 'pointer' : 'default', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
