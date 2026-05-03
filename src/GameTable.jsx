@@ -186,22 +186,49 @@ function GameTable() {
     });
   };
 
-  const dealCards = async () => {
+const dealCards = async () => {
     const suits = ['♠', '♥', '♦', '♣'];
     const values = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A'];
     let deck = [];
     
+    // 1. Build the base deck
     for (const suit of suits) {
       for (const value of values) {
+        // Remove the 2 of Hearts and 2 of Clubs to make room for Jokers
+        if (value === '2' && (suit === '♥' || suit === '♣')) continue;
+
         let weight = parseInt(value);
         if (value === 'J') weight = 11;
         if (value === 'Q') weight = 12;
         if (value === 'K') weight = 13;
         if (value === 'A') weight = 14;
-        deck.push({ suit, value, weight });
+
+        let finalSuit = suit;
+        let displaySuit = suit;
+
+        // 2. JJDD Upgrades! 
+        if (value === '2' && suit === '♠') {
+          weight = 15; // Better than the Ace
+        } else if (value === '2' && suit === '♦') {
+          weight = 16; // Better than the 2 of Spades
+          finalSuit = '♠'; // Treat it as a Spade under the hood!
+          displaySuit = '♦'; // But still show the red diamond on the card
+        }
+
+        deck.push({ 
+          suit: finalSuit,      // Used by the logic
+          displaySuit: displaySuit, // Used by the UI
+          value: value, 
+          weight: weight 
+        });
       }
     }
 
+    // 3. Add the Jokers (acting as the highest Spades)
+    deck.push({ suit: '♠', displaySuit: '🃏', value: 'LJ', weight: 17 });
+    deck.push({ suit: '♠', displaySuit: '🃏', value: 'BJ', weight: 18 });
+
+    // Shuffle...
     for (let i = deck.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
       [deck[i], deck[j]] = [deck[j], deck[i]];
@@ -212,6 +239,7 @@ function GameTable() {
     
     Object.keys(updatedPlayers).forEach(key => {
       const hand = deck.slice(cardIndex, cardIndex + 13);
+      // Sort hands: Spades on the left, then by weight
       hand.sort((a, b) => {
           if (a.suit === '♠' && b.suit !== '♠') return -1;
           if (b.suit === '♠' && a.suit !== '♠') return 1;
@@ -413,7 +441,7 @@ function GameTable() {
                   'translateX(-45px)'
               }}>
                 <div style={{ lineHeight: '1' }}>{move.card.value}</div>
-                <div style={{ lineHeight: '1' }}>{move.card.suit}</div>
+                <div style={{ lineHeight: '1' }}>{move.card.displaySuit}</div>
               </div>
             ))}
             
@@ -475,7 +503,7 @@ function GameTable() {
                 onMouseLeave={(e) => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.zIndex = idx; }}
               >
                 <div style={{ lineHeight: '1' }}>{card.value}</div>
-                <div style={{ lineHeight: '1' }}>{card.suit}</div>
+                <div style={{ lineHeight: '1' }}>{card.displaySuit}</div>
               </div>
             ))}
           </div>
