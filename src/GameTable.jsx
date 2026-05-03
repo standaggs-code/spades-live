@@ -133,6 +133,7 @@ function GameTable() {
         return { total: currentTotal, bags: currentBags };
       };
 
+      // ... (keep the calculation logic above this)
       const teamAIds = pIds.filter(id => players[id].team === 'A'); 
       const teamBIds = pIds.filter(id => players[id].team === 'B'); 
 
@@ -144,13 +145,38 @@ function GameTable() {
         nextStatus = 'gameOver';
       }
 
+      // --- NEW: Generate the Scorepad Log ---
+      const currentRound = (gameState.history ? gameState.history.length : 0) + 1;
+      
+      // Helper to format bids (shows "Nil" instead of 0)
+      const getBidStr = (pId) => players[pId].bid === 0 ? 'NIL' : players[pId].bid;
+      
+      const roundLog = {
+        round: currentRound,
+        teamA: {
+          bids: `${getBidStr(teamAIds[0])} & ${getBidStr(teamAIds[1])}`,
+          tricks: players[teamAIds[0]].tricksTaken + players[teamAIds[1]].tricksTaken,
+          score: newScoreA.total,
+          bags: newScoreA.bags
+        },
+        teamB: {
+          bids: `${getBidStr(teamBIds[0])} & ${getBidStr(teamBIds[1])}`,
+          tricks: players[teamBIds[0]].tricksTaken + players[teamBIds[1]].tricksTaken,
+          score: newScoreB.total,
+          bags: newScoreB.bags
+        }
+      };
+
+      const updatedHistory = gameState.history ? [...gameState.history, roundLog] : [roundLog];
+      // --------------------------------------
+
       update(ref(db, `rooms/${roomId}`), {
         status: nextStatus,
         scores: { A: newScoreA, B: newScoreB },
+        history: updatedHistory // <-- Save the ledger!
       });
     }
-  }, [gameState?.players, gameState?.currentTrick, isHost, roomId, gameState?.status, gameState?.scores]);
-
+  }, [gameState?.players, gameState?.currentTrick, isHost, roomId, gameState?.status, gameState?.scores, gameState?.history]); 
 
   const getPlayerInSeat = (seatName) => {
     if (!gameState || !gameState.players) return null;
@@ -174,7 +200,8 @@ function GameTable() {
       players: updatedPlayers,
       status: 'seated',
       dealer: 'player4', // Arbitrary start so player1 becomes the first real dealer
-      scores: { A: { total: 0, bags: 0 }, B: { total: 0, bags: 0 } }
+      scores: { A: { total: 0, bags: 0 }, B: { total: 0, bags: 0 } },
+      history: []
     });
   };
 
@@ -191,7 +218,8 @@ function GameTable() {
       scores: { A: { total: 0, bags: 0 }, B: { total: 0, bags: 0 } },
       players: updatedPlayers,
       currentTrick: null,
-      spadesBroken: false
+      spadesBroken: false,
+      history: []
     });
   };
 
@@ -572,6 +600,39 @@ function GameTable() {
           </div>
         </div>
       )}
+{/* The Scorepad Ledger */}
+      {gameState.history && gameState.history.length > 0 && (
+        <div style={{ marginTop: '3rem', backgroundColor: '#fff', borderRadius: '12px', padding: '1.5rem', border: '1px solid #ccc', boxShadow: '0 4px 12px rgba(0,0,0,0.05)', overflowX: 'auto' }}>
+          <h3 style={{ margin: '0 0 1rem 0', color: '#333', textAlign: 'left' }}>Match Ledger</h3>
+          <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'center', fontSize: '1.1rem' }}>
+            <thead>
+              <tr style={{ backgroundColor: '#f8f9fa', borderBottom: '3px solid #ccc' }}>
+                <th style={{ padding: '1rem' }}>Rnd</th>
+                <th style={{ padding: '1rem', color: '#1565c0' }}>Team A Bids</th>
+                <th style={{ padding: '1rem', color: '#1565c0' }}>Got</th>
+                <th style={{ padding: '1rem', color: '#1565c0' }}>Score</th>
+                <th style={{ padding: '1rem', color: '#c2185b' }}>Team B Bids</th>
+                <th style={{ padding: '1rem', color: '#c2185b' }}>Got</th>
+                <th style={{ padding: '1rem', color: '#c2185b' }}>Score</th>
+              </tr>
+            </thead>
+            <tbody>
+              {gameState.history.map((log, i) => (
+                <tr key={i} style={{ borderBottom: '1px solid #eee' }}>
+                  <td style={{ padding: '1rem', fontWeight: 'bold', color: '#555' }}>{log.round}</td>
+                  <td style={{ padding: '1rem' }}>{log.teamA.bids}</td>
+                  <td style={{ padding: '1rem' }}>{log.teamA.tricks}</td>
+                  <td style={{ padding: '1rem', fontWeight: 'bold', fontSize: '1.2rem' }}>{log.teamA.score} <span style={{fontSize:'0.8rem', color:'#888', fontWeight:'normal'}}>({log.teamA.bags}b)</span></td>
+                  <td style={{ padding: '1rem' }}>{log.teamB.bids}</td>
+                  <td style={{ padding: '1rem' }}>{log.teamB.tricks}</td>
+                  <td style={{ padding: '1rem', fontWeight: 'bold', fontSize: '1.2rem' }}>{log.teamB.score} <span style={{fontSize:'0.8rem', color:'#888', fontWeight:'normal'}}>({log.teamB.bags}b)</span></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
       
     </div>
   );
