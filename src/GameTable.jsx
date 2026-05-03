@@ -434,23 +434,40 @@ function GameTable() {
           <div style={{ gridColumn: '2' }}><Chair seatName="North" /></div>
           <div style={{ gridColumn: '1' }}><Chair seatName="West" /></div>
           <div style={{ 
-            gridColumn: '2', width: '100%', height: '180px', backgroundColor: '#2E7D32', borderRadius: '50%',
-            display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative', border: '8px solid #5D4037' 
+            gridColumn: '2', width: '100%', height: '220px', 
+            background: 'radial-gradient(circle, #2E7D32 0%, #1b4b1e 100%)', 
+            borderRadius: '100px', 
+            display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative', 
+            border: '12px solid #3e2723', 
+            boxShadow: 'inset 0 0 20px rgba(0,0,0,0.5), 0 10px 20px rgba(0,0,0,0.3)'
           }}>
             {(gameState.currentTrick ? Object.values(gameState.currentTrick) : []).map((move, index) => (
               <div key={index} style={{
-                position: 'absolute', width: '50px', height: '75px', backgroundColor: 'white', border: '1px solid #000', borderRadius: '4px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', zIndex: 10,
-                color: move.card.displaySuit === '♥' || move.card.displaySuit === '♦' ? '#d32f2f' : '#000',
-                boxShadow: '0 4px 8px rgba(0,0,0,0.4)',
-                transform: move.seat === 'North' ? 'translateY(-45px)' : move.seat === 'South' ? 'translateY(45px)' : move.seat === 'East' ? 'translateX(45px)' : 'translateX(-45px)'
+                position: 'absolute', width: '60px', height: '84px', backgroundColor: '#fff', 
+                border: '1px solid #ccc', borderRadius: '6px', display: 'flex', flexDirection: 'column', 
+                justifyContent: 'space-between', padding: '4px', boxSizing: 'border-box',
+                fontWeight: 'bold', zIndex: 10,
+                color: move.card.displaySuit === '♥' || move.card.displaySuit === '♦' ? '#d32f2f' : '#111',
+                boxShadow: '2px 4px 8px rgba(0,0,0,0.4)',
+                transform: 
+                  move.seat === 'North' ? 'translateY(-55px)' : 
+                  move.seat === 'South' ? 'translateY(55px)' : 
+                  move.seat === 'East' ? 'translateX(65px)' : 'translateX(-65px)'
               }}>
-                <div style={{ lineHeight: '1' }}>{move.card.value}</div>
-                <div style={{ lineHeight: '1' }}>{move.card.displaySuit}</div>
+                {/* Top Left Index */}
+                <div style={{ fontSize: '0.8rem', lineHeight: '1', textAlign: 'left' }}>
+                  <div>{move.card.value}</div>
+                  <div>{move.card.displaySuit}</div>
+                </div>
+                {/* Center Suit */}
+                <div style={{ fontSize: '1.5rem', textAlign: 'center', marginTop: '-10px' }}>
+                  {move.card.displaySuit}
+                </div>
               </div>
             ))}
             
             {gameState.status === 'tricks' && (gameState.currentTrick ? Object.keys(gameState.currentTrick).length : 0) < 4 && (
-              <div style={{ color: 'rgba(255,255,255,0.7)', fontSize: '1rem', fontWeight: 'bold', zIndex: 0 }}>
+              <div style={{ color: 'rgba(255,255,255,0.6)', fontSize: '1.1rem', fontWeight: 'bold', zIndex: 0, letterSpacing: '1px' }}>
                 {gameState.players[gameState.currentTurn]?.name}&apos;s Turn
               </div>
             )}
