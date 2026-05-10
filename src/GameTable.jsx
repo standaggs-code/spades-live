@@ -10,11 +10,9 @@ function GameTable() {
   const navigate = useNavigate();
   const [gameState, setGameState] = useState(null);
 
-  // Dynamic Host: The host is always the "oldest" player ID remaining in the room
   const hostId = gameState?.players ? Object.keys(gameState.players).sort()[0] : null;
   const isHost = playerId === hostId;
 
-  // 1. Core Database Listener & Disconnect Hook
   useEffect(() => {
     const roomRef = ref(db, `rooms/${roomId}`);
     const unsubscribe = onValue(roomRef, (snapshot) => {
@@ -26,14 +24,12 @@ function GameTable() {
       }
     });
 
-    // If this specific user's browser closes, Firebase deletes them from the room
     const myPlayerRef = ref(db, `rooms/${roomId}/players/${playerId}`);
     onDisconnect(myPlayerRef).remove();
 
     return () => off(roomRef, 'value', unsubscribe);
   }, [roomId, playerId, navigate]);
 
-  // 2. The Rage-Quit Catcher (Only the Host watches for this)
   useEffect(() => {
     if (isHost && gameState && gameState.status !== 'waiting') {
       const playerCount = Object.keys(gameState.players || {}).length;
@@ -44,7 +40,6 @@ function GameTable() {
     }
   }, [gameState?.players, isHost, roomId, gameState?.status]);
 
-  // 3. Referee: Detect when all bids are in
   useEffect(() => {
     if (!isHost || !gameState || gameState.status !== 'playing') return;
     const players = gameState.players || {};
@@ -56,7 +51,6 @@ function GameTable() {
     }
   }, [gameState, isHost, roomId]);
 
-  // 4. Referee: Evaluate Trick after 4 cards are played
   useEffect(() => {
     if (!isHost || !gameState || gameState.status !== 'tricks') return;
     const trick = gameState.currentTrick ? Object.values(gameState.currentTrick) : [];
@@ -92,7 +86,7 @@ function GameTable() {
     }
   }, [gameState?.currentTrick, isHost, roomId, gameState?.status]);
 
-  // 5. Referee: End of Hand Scoring
+  // 5. Referee: Indestructible End of Hand Scoring
   useEffect(() => {
     if (!isHost || !gameState || gameState.status !== 'tricks') return;
     const players = gameState.players || {};
@@ -103,28 +97,30 @@ function GameTable() {
 
     if (totalTricks === 13 && !gameState.currentTrick) {
       const calculateTeamScore = (teamLabel, p1Id, p2Id) => {
-        const p1 = players[p1Id];
-        const p2 = players[p2Id];
+        const p1 = players[p1Id] || {};
+        const p2 = players[p2Id] || {};
         let scoreChange = 0;
         let newBags = 0;
 
         const checkNil = (p) => {
           if (p.bid === 0) {
-            if (p.tricksTaken === 0) scoreChange += 50; 
+            if ((p.tricksTaken || 0) === 0) scoreChange += 50; 
             else scoreChange -= 50; 
           }
         };
         checkNil(p1);
         checkNil(p2);
 
-        const teamBid = (p1.bid === 0 ? 0 : p1.bid) + (p2.bid === 0 ? 0 : p2.bid);
-        const teamTricks = p1.tricksTaken + p2.tricksTaken;
+        const p1Bid = p1.bid || 0;
+        const p2Bid = p2.bid || 0;
+        const teamBid = (p1Bid === 0 ? 0 : p1Bid) + (p2Bid === 0 ? 0 : p2Bid);
+        const teamTricks = (p1.tricksTaken || 0) + (p2.tricksTaken || 0);
 
         if (teamTricks < teamBid) scoreChange -= (teamBid * 10); 
         else { scoreChange += (teamBid * 10); newBags = teamTricks - teamBid; }
 
-        let currentTotal = gameState.scores[teamLabel].total + scoreChange;
-        let currentBags = gameState.scores[teamLabel].bags + newBags;
+        let currentTotal = (gameState.scores?.[teamLabel]?.total || 0) + scoreChange;
+        let currentBags = (gameState.scores?.[teamLabel]?.bags || 0) + newBags;
 
         if (currentBags >= 5) { currentTotal -= 50; currentBags = currentBags % 5; }
         return { total: currentTotal, bags: currentBags };
@@ -139,7 +135,6 @@ function GameTable() {
       if (newScoreA.total >= 300 || newScoreB.total >= 300) {
         nextStatus = 'gameOver';
         
-        // Global Leaderboard Record
         if (isHost && gameState.status === 'tricks') {
           const winningTeam = newScoreA.total >= 300 ? 'A' : 'B';
           const losingTeam = winningTeam === 'A' ? 'B' : 'A';
@@ -156,29 +151,41 @@ function GameTable() {
       }
 
       const currentRound = (gameState.history ? gameState.history.length : 0) + 1;
-      const getBidStr = (pId) => players[pId].bid === 0 ? 'NIL' : players[pId].bid;
+      const getBidStr = (p) => p?.bid === 0 ? 'NIL' : (p?.bid || 0);
+      const p1A = players[teamAIds[0]] || {}; const p2A = players[teamAIds[1]] || {};
+      const p1B = players[teamBIds[0]] || {}; const p2B = players[teamBIds[1]] || {};
+
       const roundLog = {
         round: currentRound,
-        teamA: { bids: `${getBidStr(teamAIds[0])} & ${getBidStr(teamAIds[1])}`, tricks: players[teamAIds[0]].tricksTaken + players[teamAIds[1]].tricksTaken, score: newScoreA.total, bags: newScoreA.bags },
-        teamB: { bids: `${getBidStr(teamBIds[0])} & ${getBidStr(teamBIds[1])}`, tricks: players[teamBIds[0]].tricksTaken + players[teamBIds[1]].tricksTaken, score: newScoreB.total, bags: newScoreB.bags }
+        teamA: { bids: `${getBidStr(p1A)} & ${getBidStr(p2A)}`, tricks: (p1A.tricksTaken || 0) + (p2A.tricksTaken || 0), score: newScoreA.total, bags: newScoreA.bags },
+        teamB: { bids: `${getBidStr(p1B)} & ${getBidStr(p2B)}`, tricks: (p1B.tricksTaken || 0) + (p2B.tricksTaken || 0), score: newScoreB.total, bags: newScoreB.bags }
       };
+
+      // Automatically pass the dealer to the left!
+      let nextDealerId = hostId; 
+      if (gameState.dealer && players[gameState.dealer]) {
+        const currentDealerSeat = players[gameState.dealer].seat;
+        const clockwiseOrder = ['North', 'East', 'South', 'West'];
+        const nextDealerSeat = clockwiseOrder[(clockwiseOrder.indexOf(currentDealerSeat) + 1) % 4];
+        nextDealerId = Object.keys(players).find(id => players[id].seat === nextDealerSeat) || hostId;
+      }
 
       update(ref(db, `rooms/${roomId}`), {
         status: nextStatus,
         scores: { A: newScoreA, B: newScoreB },
-        history: gameState.history ? [...gameState.history, roundLog] : [roundLog]
+        history: gameState.history ? [...gameState.history, roundLog] : [roundLog],
+        dealer: nextDealerId
       });
     }
-  }, [gameState?.players, gameState?.currentTrick, isHost, roomId, gameState?.status, gameState?.scores, gameState?.history]);
+  }, [gameState?.players, gameState?.currentTrick, isHost, roomId, gameState?.status, gameState?.scores, gameState?.history, hostId]);
 
-  // Explicit Leave Game Function
   const handleLeave = async () => {
     if (gameState?.players?.[playerId]) {
       const updatedPlayers = { ...gameState.players };
       delete updatedPlayers[playerId];
 
       if (Object.keys(updatedPlayers).length === 0) {
-        await remove(ref(db, `rooms/${roomId}`)); // Nuke empty room
+        await remove(ref(db, `rooms/${roomId}`)); 
       } else {
         await update(ref(db, `rooms/${roomId}`), { players: updatedPlayers, status: 'waiting' });
       }
@@ -205,7 +212,7 @@ function GameTable() {
     });
 
     await update(ref(db, `rooms/${roomId}`), {
-      players: updatedPlayers, status: 'seated', dealer: 'player1', // P1 gets first deal automatically
+      players: updatedPlayers, status: 'seated', dealer: hostId, 
       scores: { A: { total: 0, bags: 0 }, B: { total: 0, bags: 0 } }, history: []
     });
   };
@@ -218,16 +225,9 @@ function GameTable() {
       updatedPlayers[key].tricksTaken = 0;
     });
 
-    // Pass the dealer to the left!
-    const currentDealerSeat = gameState.players[gameState.dealer].seat;
-    const clockwiseOrder = ['North', 'East', 'South', 'West'];
-    const nextDealerSeat = clockwiseOrder[(clockwiseOrder.indexOf(currentDealerSeat) + 1) % 4];
-    const nextDealerId = Object.keys(gameState.players).find(id => gameState.players[id].seat === nextDealerSeat);
-
     await update(ref(db, `rooms/${roomId}`), {
       status: 'seated', scores: { A: { total: 0, bags: 0 }, B: { total: 0, bags: 0 } },
-      players: updatedPlayers, currentTrick: null, spadesBroken: false, history: [],
-      dealer: nextDealerId
+      players: updatedPlayers, currentTrick: null, spadesBroken: false, history: []
     });
   };
 
@@ -449,7 +449,6 @@ function GameTable() {
         </div>
       )}
 
-      {/* DEALER BUTTON UI FIX */}
       {gameState.dealer === playerId && gameState.status === 'seated' && (
         <div style={{ marginTop: '2rem' }}>
           <button onClick={dealCards} style={{ padding: '0.75rem 1.5rem', backgroundColor: '#007bff', color: 'white', border: 'none', borderRadius: '8px', fontSize: '1.2rem', cursor: 'pointer' }}>
