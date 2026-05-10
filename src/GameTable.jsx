@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams, useSearchParams, useNavigate } from 'react-router-dom';
-import { ref, onValue, off, update, get } from 'firebase/database';
+import { ref, onValue, off, update, get, remove, onDisconnect } from 'firebase/database';
 import { db } from './firebase';
 
 function GameTable() {
@@ -10,9 +10,11 @@ function GameTable() {
   const navigate = useNavigate();
   const [gameState, setGameState] = useState(null);
 
-  const isHost = playerId === 'player1';
+  // Dynamic Host: The host is always the "oldest" player ID remaining in the room
+  const hostId = gameState?.players ? Object.keys(gameState.players).sort()[0] : null;
+  const isHost = playerId === hostId;
 
-  // 1. Core Database Listener
+  // 1. Core Database Listener & Disconnect Hook
   useEffect(() => {
     const roomRef = ref(db, `rooms/${roomId}`);
     const unsubscribe = onValue(roomRef, (snapshot) => {
@@ -23,32 +25,40 @@ function GameTable() {
         navigate('/');
       }
     });
-    return () => off(roomRef, 'value', unsubscribe);
-  }, [roomId, navigate]);
 
-  // 2. Referee: Detect when all bids are in
+    // If this specific user's browser closes, Firebase deletes them from the room
+    const myPlayerRef = ref(db, `rooms/${roomId}/players/${playerId}`);
+    onDisconnect(myPlayerRef).remove();
+
+    return () => off(roomRef, 'value', unsubscribe);
+  }, [roomId, playerId, navigate]);
+
+  // 2. The Rage-Quit Catcher (Only the Host watches for this)
+  useEffect(() => {
+    if (isHost && gameState && gameState.status !== 'waiting') {
+      const playerCount = Object.keys(gameState.players || {}).length;
+      if (playerCount < 4) {
+        update(ref(db, `rooms/${roomId}`), { status: 'waiting' });
+        alert("A player disconnected. The game has been paused and returned to the waiting room.");
+      }
+    }
+  }, [gameState?.players, isHost, roomId, gameState?.status]);
+
+  // 3. Referee: Detect when all bids are in
   useEffect(() => {
     if (!isHost || !gameState || gameState.status !== 'playing') return;
-
     const players = gameState.players || {};
     const playerIds = Object.keys(players);
-
-    const allBid = playerIds.length === 4 && playerIds.every(id => 
-      players[id].bid !== undefined && players[id].bid !== null
-    );
+    const allBid = playerIds.length === 4 && playerIds.every(id => players[id].bid !== undefined && players[id].bid !== null);
 
     if (allBid) {
-      update(ref(db, `rooms/${roomId}`), { 
-        status: 'tricks',
-        currentTrick: [] 
-      });
+      update(ref(db, `rooms/${roomId}`), { status: 'tricks', currentTrick: [] });
     }
   }, [gameState, isHost, roomId]);
 
-  // 3. Referee: Evaluate Trick after 4 cards are played
+  // 4. Referee: Evaluate Trick after 4 cards are played
   useEffect(() => {
     if (!isHost || !gameState || gameState.status !== 'tricks') return;
-    
     const trick = gameState.currentTrick ? Object.values(gameState.currentTrick) : [];
     
     if (trick.length === 4) {
@@ -61,9 +71,8 @@ function GameTable() {
           const winningCard = winningMove.card;
           const currentCard = move.card;
 
-          if (currentCard.suit === '♠' && winningCard.suit !== '♠') {
-            winningMove = move;
-          } else if (currentCard.suit === '♠' && winningCard.suit === '♠') {
+          if (currentCard.suit === '♠' && winningCard.suit !== '♠') winningMove = move;
+          else if (currentCard.suit === '♠' && winningCard.suit === '♠') {
             if (currentCard.weight > winningCard.weight) winningMove = move;
           } else if (currentCard.suit === leadSuit && winningCard.suit === leadSuit) {
             if (currentCard.weight > winningCard.weight) winningMove = move;
@@ -78,17 +87,14 @@ function GameTable() {
           currentTurn: winnerId,
           [`players/${winnerId}/tricksTaken`]: currentTricksTaken + 1
         });
-
       }, 3000); 
-
       return () => clearTimeout(timer);
     }
   }, [gameState?.currentTrick, isHost, roomId, gameState?.status]);
 
-  // 4. Referee: End of Hand Scoring (Your House Rules)
+  // 5. Referee: End of Hand Scoring
   useEffect(() => {
     if (!isHost || !gameState || gameState.status !== 'tricks') return;
-
     const players = gameState.players || {};
     const pIds = Object.keys(players);
     if (pIds.length !== 4) return;
@@ -114,93 +120,71 @@ function GameTable() {
         const teamBid = (p1.bid === 0 ? 0 : p1.bid) + (p2.bid === 0 ? 0 : p2.bid);
         const teamTricks = p1.tricksTaken + p2.tricksTaken;
 
-        if (teamTricks < teamBid) {
-          scoreChange -= (teamBid * 10); 
-        } else {
-          scoreChange += (teamBid * 10); 
-          newBags = teamTricks - teamBid;
-        }
+        if (teamTricks < teamBid) scoreChange -= (teamBid * 10); 
+        else { scoreChange += (teamBid * 10); newBags = teamTricks - teamBid; }
 
         let currentTotal = gameState.scores[teamLabel].total + scoreChange;
         let currentBags = gameState.scores[teamLabel].bags + newBags;
 
-        if (currentBags >= 5) {
-          currentTotal -= 50;
-          currentBags = currentBags % 5;
-        }
-
+        if (currentBags >= 5) { currentTotal -= 50; currentBags = currentBags % 5; }
         return { total: currentTotal, bags: currentBags };
       };
 
       const teamAIds = pIds.filter(id => players[id].team === 'A'); 
       const teamBIds = pIds.filter(id => players[id].team === 'B'); 
-
       const newScoreA = calculateTeamScore('A', teamAIds[0], teamAIds[1]);
       const newScoreB = calculateTeamScore('B', teamBIds[0], teamBIds[1]);
 
       let nextStatus = 'seated';
       if (newScoreA.total >= 300 || newScoreB.total >= 300) {
         nextStatus = 'gameOver';
-
-        // --- NEW: Global Leaderboard Record ---
-        // The host triggers this exactly once when the game officially ends
+        
+        // Global Leaderboard Record
         if (isHost && gameState.status === 'tricks') {
-          const winningTeam = newScoreA.total >= 30 ? 'A' : 'B';
+          const winningTeam = newScoreA.total >= 300 ? 'A' : 'B';
           const losingTeam = winningTeam === 'A' ? 'B' : 'A';
-
           const winners = Object.values(players).filter(p => p.team === winningTeam);
           const losers = Object.values(players).filter(p => p.team === losingTeam);
 
-          // Fetch the current global board, update it, and save it back
           get(ref(db, 'leaderboard')).then(snapshot => {
             const board = snapshot.exists() ? snapshot.val() : {};
-
-            winners.forEach(w => {
-              if (!board[w.name]) board[w.name] = { wins: 0, losses: 0 };
-              board[w.name].wins += 1;
-            });
-
-            losers.forEach(l => {
-              if (!board[l.name]) board[l.name] = { wins: 0, losses: 0 };
-              board[l.name].losses += 1;
-            });
-
+            winners.forEach(w => { if (!board[w.name]) board[w.name] = { wins: 0, losses: 0 }; board[w.name].wins += 1; });
+            losers.forEach(l => { if (!board[l.name]) board[l.name] = { wins: 0, losses: 0 }; board[l.name].losses += 1; });
             update(ref(db), { leaderboard: board });
           });
         }
-        // --------------------------------------
       }
 
-      // Generate the Scorepad Log
       const currentRound = (gameState.history ? gameState.history.length : 0) + 1;
       const getBidStr = (pId) => players[pId].bid === 0 ? 'NIL' : players[pId].bid;
-      
       const roundLog = {
         round: currentRound,
-        teamA: {
-          bids: `${getBidStr(teamAIds[0])} & ${getBidStr(teamAIds[1])}`,
-          tricks: players[teamAIds[0]].tricksTaken + players[teamAIds[1]].tricksTaken,
-          score: newScoreA.total,
-          bags: newScoreA.bags
-        },
-        teamB: {
-          bids: `${getBidStr(teamBIds[0])} & ${getBidStr(teamBIds[1])}`,
-          tricks: players[teamBIds[0]].tricksTaken + players[teamBIds[1]].tricksTaken,
-          score: newScoreB.total,
-          bags: newScoreB.bags
-        }
+        teamA: { bids: `${getBidStr(teamAIds[0])} & ${getBidStr(teamAIds[1])}`, tricks: players[teamAIds[0]].tricksTaken + players[teamAIds[1]].tricksTaken, score: newScoreA.total, bags: newScoreA.bags },
+        teamB: { bids: `${getBidStr(teamBIds[0])} & ${getBidStr(teamBIds[1])}`, tricks: players[teamBIds[0]].tricksTaken + players[teamBIds[1]].tricksTaken, score: newScoreB.total, bags: newScoreB.bags }
       };
-
-      const updatedHistory = gameState.history ? [...gameState.history, roundLog] : [roundLog];
 
       update(ref(db, `rooms/${roomId}`), {
         status: nextStatus,
         scores: { A: newScoreA, B: newScoreB },
-        history: updatedHistory
+        history: gameState.history ? [...gameState.history, roundLog] : [roundLog]
       });
     }
   }, [gameState?.players, gameState?.currentTrick, isHost, roomId, gameState?.status, gameState?.scores, gameState?.history]);
 
+  // Explicit Leave Game Function
+  const handleLeave = async () => {
+    if (gameState?.players?.[playerId]) {
+      const updatedPlayers = { ...gameState.players };
+      delete updatedPlayers[playerId];
+
+      if (Object.keys(updatedPlayers).length === 0) {
+        await remove(ref(db, `rooms/${roomId}`)); // Nuke empty room
+      } else {
+        await update(ref(db, `rooms/${roomId}`), { players: updatedPlayers, status: 'waiting' });
+      }
+    }
+    navigate('/');
+  };
 
   const getPlayerInSeat = (seatName) => {
     if (!gameState || !gameState.players) return null;
@@ -221,11 +205,8 @@ function GameTable() {
     });
 
     await update(ref(db, `rooms/${roomId}`), {
-      players: updatedPlayers,
-      status: 'seated',
-      dealer: 'player4', 
-      scores: { A: { total: 0, bags: 0 }, B: { total: 0, bags: 0 } },
-      history: []
+      players: updatedPlayers, status: 'seated', dealer: 'player1', // P1 gets first deal automatically
+      scores: { A: { total: 0, bags: 0 }, B: { total: 0, bags: 0 } }, history: []
     });
   };
 
@@ -237,13 +218,16 @@ function GameTable() {
       updatedPlayers[key].tricksTaken = 0;
     });
 
+    // Pass the dealer to the left!
+    const currentDealerSeat = gameState.players[gameState.dealer].seat;
+    const clockwiseOrder = ['North', 'East', 'South', 'West'];
+    const nextDealerSeat = clockwiseOrder[(clockwiseOrder.indexOf(currentDealerSeat) + 1) % 4];
+    const nextDealerId = Object.keys(gameState.players).find(id => gameState.players[id].seat === nextDealerSeat);
+
     await update(ref(db, `rooms/${roomId}`), {
-      status: 'seated',
-      scores: { A: { total: 0, bags: 0 }, B: { total: 0, bags: 0 } },
-      players: updatedPlayers,
-      currentTrick: null,
-      spadesBroken: false,
-      history: []
+      status: 'seated', scores: { A: { total: 0, bags: 0 }, B: { total: 0, bags: 0 } },
+      players: updatedPlayers, currentTrick: null, spadesBroken: false, history: [],
+      dealer: nextDealerId
     });
   };
 
@@ -255,28 +239,15 @@ function GameTable() {
     for (const suit of suits) {
       for (const value of values) {
         if (value === '2' && (suit === '♥' || suit === '♣')) continue;
-
         let weight = parseInt(value);
-        if (value === 'J') weight = 11;
-        if (value === 'Q') weight = 12;
-        if (value === 'K') weight = 13;
-        if (value === 'A') weight = 14;
+        if (value === 'J') weight = 11; if (value === 'Q') weight = 12; if (value === 'K') weight = 13; if (value === 'A') weight = 14;
+        let finalSuit = suit; let displaySuit = suit;
 
-        let finalSuit = suit;
-        let displaySuit = suit;
-
-        if (value === '2' && suit === '♠') {
-          weight = 15; 
-        } else if (value === '2' && suit === '♦') {
-          weight = 16; 
-          finalSuit = '♠'; 
-          displaySuit = '♦'; 
-        }
-
+        if (value === '2' && suit === '♠') weight = 15; 
+        else if (value === '2' && suit === '♦') { weight = 16; finalSuit = '♠'; displaySuit = '♦'; }
         deck.push({ suit: finalSuit, displaySuit: displaySuit, value: value, weight: weight });
       }
     }
-
     deck.push({ suit: '♠', displaySuit: '🃏', value: 'LJ', weight: 17 });
     deck.push({ suit: '♠', displaySuit: '🃏', value: 'BJ', weight: 18 });
 
@@ -287,7 +258,6 @@ function GameTable() {
 
     const updatedPlayers = { ...gameState.players };
     let cardIndex = 0;
-    
     Object.keys(updatedPlayers).forEach(key => {
       const hand = deck.slice(cardIndex, cardIndex + 13);
       hand.sort((a, b) => {
@@ -297,93 +267,58 @@ function GameTable() {
           return b.weight - a.weight;
       });
       updatedPlayers[key].hand = hand;
-      delete updatedPlayers[key].bid; 
-      updatedPlayers[key].tricksTaken = 0; 
+      delete updatedPlayers[key].bid; updatedPlayers[key].tricksTaken = 0; 
       cardIndex += 13;
     });
 
-    const currentDealerId = gameState.dealer || 'player4';
-    const currentDealerSeat = updatedPlayers[currentDealerId].seat;
+    const currentDealerSeat = updatedPlayers[gameState.dealer].seat;
     const clockwiseOrder = ['North', 'East', 'South', 'West'];
-    
-    const currentDealerIndex = clockwiseOrder.indexOf(currentDealerSeat);
-    const newDealerSeat = clockwiseOrder[(currentDealerIndex + 1) % 4];
-    const newDealerId = Object.keys(updatedPlayers).find(id => updatedPlayers[id].seat === newDealerSeat);
-    
-    const firstPlayerSeat = clockwiseOrder[(currentDealerIndex + 2) % 4]; 
+    const firstPlayerSeat = clockwiseOrder[(clockwiseOrder.indexOf(currentDealerSeat) + 1) % 4]; 
     const firstPlayerId = Object.keys(updatedPlayers).find(id => updatedPlayers[id].seat === firstPlayerSeat);
 
     await update(ref(db, `rooms/${roomId}`), {
-      status: 'playing',
-      players: updatedPlayers,
-      spadesBroken: false,
-      dealer: newDealerId,
-      currentBidder: firstPlayerId, 
-      currentTurn: firstPlayerId    
+      status: 'playing', players: updatedPlayers, spadesBroken: false,
+      currentBidder: firstPlayerId, currentTurn: firstPlayerId    
     });
   };
 
   const submitBid = async (bidValue) => {
     if (gameState.currentBidder !== playerId) return alert("Wait your turn to bid!");
-
     const currentSeat = gameState.players[playerId].seat;
     const clockwiseOrder = ['North', 'East', 'South', 'West'];
-    const currentSeatIndex = clockwiseOrder.indexOf(currentSeat);
-    const nextSeat = clockwiseOrder[(currentSeatIndex + 1) % 4];
+    const nextSeat = clockwiseOrder[(clockwiseOrder.indexOf(currentSeat) + 1) % 4];
     const nextPlayerId = Object.keys(gameState.players).find(id => gameState.players[id].seat === nextSeat);
 
-    await update(ref(db, `rooms/${roomId}`), {
-      [`players/${playerId}/bid`]: bidValue,
-      currentBidder: nextPlayerId
-    });
+    await update(ref(db, `rooms/${roomId}`), { [`players/${playerId}/bid`]: bidValue, currentBidder: nextPlayerId });
   };
 
   const playCard = async (card, cardIndex) => {
     if (gameState.currentTurn !== playerId) return alert("Wait your turn!");
-
     const currentTrickArray = gameState.currentTrick ? Object.values(gameState.currentTrick) : [];
     const myHand = gameState.players[playerId].hand;
     const isLeadCard = currentTrickArray.length === 0;
 
     if (isLeadCard && card.suit === '♠' && !gameState.spadesBroken) {
-      const onlyHasSpades = myHand.every(c => c.suit === '♠');
-      if (!onlyHasSpades) {
-        return alert("Spades have not been broken yet! You must lead with another suit.");
-      }
+      if (!myHand.every(c => c.suit === '♠')) return alert("Spades have not been broken yet! You must lead with another suit.");
     }
-
     if (!isLeadCard) {
       const leadSuit = currentTrickArray[0].card.suit;
-      if (card.suit !== leadSuit) {
-        const hasLeadSuit = myHand.some(c => c.suit === leadSuit);
-        if (hasLeadSuit) {
-          return alert(`You must follow suit! Please play a ${leadSuit}.`);
-        }
-      }
+      if (card.suit !== leadSuit && myHand.some(c => c.suit === leadSuit)) return alert(`You must follow suit! Please play a ${leadSuit}.`);
     }
 
     const updatedHand = [...myHand];
     updatedHand.splice(cardIndex, 1); 
-
-    const newTrickMove = { playerId: playerId, card: card, seat: gameState.players[playerId].seat };
-    const updatedTrick = [...currentTrickArray, newTrickMove];
+    const updatedTrick = [...currentTrickArray, { playerId: playerId, card: card, seat: gameState.players[playerId].seat }];
 
     const currentSeat = gameState.players[playerId].seat;
     const clockwiseOrder = ['North', 'East', 'South', 'West'];
-    const currentSeatIndex = clockwiseOrder.indexOf(currentSeat);
-    const nextSeat = clockwiseOrder[(currentSeatIndex + 1) % 4];
-    const nextPlayer = Object.keys(gameState.players).find(id => gameState.players[id].seat === nextSeat);
+    const nextPlayer = Object.keys(gameState.players).find(id => gameState.players[id].seat === clockwiseOrder[(clockwiseOrder.indexOf(currentSeat) + 1) % 4]);
 
     let updatedSpadesBroken = gameState.spadesBroken || false;
-    if (card.suit === '♠' && (!isLeadCard || myHand.every(c => c.suit === '♠'))) {
-      updatedSpadesBroken = true;
-    }
+    if (card.suit === '♠' && (!isLeadCard || myHand.every(c => c.suit === '♠'))) updatedSpadesBroken = true;
 
     await update(ref(db, `rooms/${roomId}`), {
-      [`players/${playerId}/hand`]: updatedHand,
-      currentTrick: updatedTrick,
-      currentTurn: nextPlayer,
-      spadesBroken: updatedSpadesBroken
+      [`players/${playerId}/hand`]: updatedHand, currentTrick: updatedTrick, currentTurn: nextPlayer, spadesBroken: updatedSpadesBroken
     });
   };
 
@@ -392,25 +327,13 @@ function GameTable() {
   const Chair = ({ seatName }) => {
     const occupant = getPlayerInSeat(seatName);
     const occupantId = Object.keys(gameState.players || {}).find(key => gameState.players[key].seat === seatName);
-
     return (
-      <div style={{
-        padding: '1rem',
-        backgroundColor: occupant ? '#4CAF50' : '#e0e0e0', 
-        color: occupant ? 'white' : '#666',
-        borderRadius: '8px',
-        minWidth: '100px',
-        border: occupant ? '2px solid #2E7D32' : '2px dashed #999',
-        position: 'relative'
-      }}>
+      <div style={{ padding: '1rem', backgroundColor: occupant ? '#4CAF50' : '#e0e0e0', color: occupant ? 'white' : '#666', borderRadius: '8px', minWidth: '100px', border: occupant ? '2px solid #2E7D32' : '2px dashed #999', position: 'relative' }}>
         {gameState.dealer === occupantId && (
-          <div style={{ position: 'absolute', top: '-10px', right: '-10px', backgroundColor: '#ffc107', color: '#000', borderRadius: '50%', width: '24px', height: '24px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '0.8rem', boxShadow: '0 2px 4px rgba(0,0,0,0.2)' }}>
-            D
-          </div>
+          <div style={{ position: 'absolute', top: '-10px', right: '-10px', backgroundColor: '#ffc107', color: '#000', borderRadius: '50%', width: '24px', height: '24px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '0.8rem', boxShadow: '0 2px 4px rgba(0,0,0,0.2)' }}>D</div>
         )}
         <div style={{ fontSize: '0.8rem', textTransform: 'uppercase', marginBottom: '0.5rem' }}>{seatName}</div>
         <div style={{ fontWeight: 'bold' }}>{occupant ? occupant.name : 'Empty'}</div>
-        
         {occupant && occupant.bid !== undefined && (
           <div style={{ marginTop: '0.5rem', backgroundColor: 'rgba(0,0,0,0.2)', padding: '4px 8px', borderRadius: '4px', display: 'flex', justifyContent: 'space-between', fontSize: '0.9rem' }}>
             <span>Bid: {occupant.bid === 0 ? 'NIL' : occupant.bid}</span>
@@ -425,7 +348,7 @@ function GameTable() {
     <div style={{ padding: '2rem', maxWidth: '800px', margin: '0 auto', textAlign: 'center' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem' }}>
         <h2>Room: <span style={{ color: '#0066cc' }}>{roomId}</span></h2>
-        <button onClick={() => navigate('/')} style={{ padding: '0.5rem 1rem', backgroundColor: '#dc3545', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>Leave</button>
+        <button onClick={handleLeave} style={{ padding: '0.5rem 1rem', backgroundColor: '#dc3545', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>Leave</button>
       </div>
 
       {gameState.scores && (
@@ -464,7 +387,7 @@ function GameTable() {
           <ul style={{ listStyle: 'none', padding: 0, margin: '2rem 0' }}>
             {Object.values(gameState.players || {}).map((p, i) => (
               <li key={i} style={{ fontSize: '1.4rem', margin: '0.75rem 0', color: '#2E7D32', fontWeight: 'bold' }}>
-                ♠️ {p.name} {p.id === playerId ? "(You)" : ""}
+                ♠️ {p.name} {p.id === playerId ? "(You)" : ""} {p.id === hostId ? "⭐" : ""}
               </li>
             ))}
           </ul>
@@ -484,24 +407,16 @@ function GameTable() {
           <div style={{ gridColumn: '1' }}><Chair seatName="West" /></div>
           
           <div style={{ 
-            gridColumn: '2', width: '100%', height: '220px', 
-            background: 'radial-gradient(circle, #2E7D32 0%, #1b4b1e 100%)', 
-            borderRadius: '100px', 
-            display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative', 
-            border: '12px solid #3e2723', 
-            boxShadow: 'inset 0 0 20px rgba(0,0,0,0.5), 0 10px 20px rgba(0,0,0,0.3)'
+            gridColumn: '2', width: '100%', height: '220px', background: 'radial-gradient(circle, #2E7D32 0%, #1b4b1e 100%)', 
+            borderRadius: '100px', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative', 
+            border: '12px solid #3e2723', boxShadow: 'inset 0 0 20px rgba(0,0,0,0.5), 0 10px 20px rgba(0,0,0,0.3)'
           }}>
             {(gameState.currentTrick ? Object.values(gameState.currentTrick) : []).map((move, index) => (
               <div key={index} style={{
-                position: 'absolute', width: '60px', height: '84px', backgroundColor: '#fff', 
-                border: '1px solid #ccc', borderRadius: '6px', display: 'flex', flexDirection: 'column', 
-                padding: '4px', boxSizing: 'border-box', fontWeight: 'bold', zIndex: 10,
+                position: 'absolute', width: '60px', height: '84px', backgroundColor: '#fff', border: '1px solid #ccc', borderRadius: '6px', display: 'flex', flexDirection: 'column', padding: '4px', boxSizing: 'border-box', fontWeight: 'bold', zIndex: 10,
                 color: move.card.displaySuit === '♥' || move.card.displaySuit === '♦' ? '#d32f2f' : '#111',
                 boxShadow: '2px 4px 8px rgba(0,0,0,0.4)',
-                transform: 
-                  move.seat === 'North' ? 'translateY(-55px)' : 
-                  move.seat === 'South' ? 'translateY(55px)' : 
-                  move.seat === 'East' ? 'translateX(65px)' : 'translateX(-65px)'
+                transform: move.seat === 'North' ? 'translateY(-55px)' : move.seat === 'South' ? 'translateY(55px)' : move.seat === 'East' ? 'translateX(65px)' : 'translateX(-65px)'
               }}>
                 <div style={{ fontSize: '0.8rem', lineHeight: '1', textAlign: 'left', position: 'absolute', top: '4px', left: '4px' }}>
                   <div>{move.card.value === 'LJ' || move.card.value === 'BJ' ? '' : move.card.value}</div>
@@ -534,7 +449,8 @@ function GameTable() {
         </div>
       )}
 
-      {isHost && gameState.status === 'seated' && (
+      {/* DEALER BUTTON UI FIX */}
+      {gameState.dealer === playerId && gameState.status === 'seated' && (
         <div style={{ marginTop: '2rem' }}>
           <button onClick={dealCards} style={{ padding: '0.75rem 1.5rem', backgroundColor: '#007bff', color: 'white', border: 'none', borderRadius: '8px', fontSize: '1.2rem', cursor: 'pointer' }}>
             Deal Cards!
@@ -549,11 +465,7 @@ function GameTable() {
               <h3>Place Your Bid</h3>
               <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'center', flexWrap: 'wrap', marginTop: '1rem' }}>
                 {['Nil', 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13].map((val) => (
-                  <button
-                    key={val}
-                    onClick={() => submitBid(val === 'Nil' ? 0 : val)}
-                    style={{ padding: '0.75rem', minWidth: '45px', cursor: 'pointer', backgroundColor: val === 'Nil' ? '#6f42c1' : '#007bff', color: 'white', border: 'none', borderRadius: '4px', fontWeight: 'bold' }}
-                  >
+                  <button key={val} onClick={() => submitBid(val === 'Nil' ? 0 : val)} style={{ padding: '0.75rem', minWidth: '45px', cursor: 'pointer', backgroundColor: val === 'Nil' ? '#6f42c1' : '#007bff', color: 'white', border: 'none', borderRadius: '4px', fontWeight: 'bold' }}>
                     {val}
                   </button>
                 ))}
@@ -582,35 +494,17 @@ function GameTable() {
                   key={idx} 
                   onClick={() => isMyTurn && playCard(card, idx)}
                   style={{ 
-                    position: 'absolute',
-                    width: '65px', height: '95px', padding: '4px', boxSizing: 'border-box',
-                    borderRadius: '8px',
-                    border: isMyTurn ? '2px solid #ffc107' : '1px solid #ccc',
-                    backgroundColor: '#fff', 
-                    color: card.displaySuit === '♥' || card.displaySuit === '♦' ? '#d32f2f' : '#111',
-                    display: 'flex', flexDirection: 'column', justifyContent: 'space-between',
-                    fontWeight: 'bold',
-                    boxShadow: '-2px 4px 8px rgba(0,0,0,0.2)',
-                    cursor: isMyTurn ? 'pointer' : 'default',
-                    zIndex: idx,
-                    transform: `translateX(${offsetFromCenter * 25}px) translateY(${translateY}px) rotate(${rotation}deg)`,
-                    transformOrigin: 'bottom center',
-                    transition: 'transform 0.2s cubic-bezier(0.25, 0.8, 0.25, 1), z-index 0.2s',
+                    position: 'absolute', width: '65px', height: '95px', padding: '4px', boxSizing: 'border-box', borderRadius: '8px', border: isMyTurn ? '2px solid #ffc107' : '1px solid #ccc', backgroundColor: '#fff', 
+                    color: card.displaySuit === '♥' || card.displaySuit === '♦' ? '#d32f2f' : '#111', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', fontWeight: 'bold', boxShadow: '-2px 4px 8px rgba(0,0,0,0.2)', cursor: isMyTurn ? 'pointer' : 'default', zIndex: idx,
+                    transform: `translateX(${offsetFromCenter * 25}px) translateY(${translateY}px) rotate(${rotation}deg)`, transformOrigin: 'bottom center', transition: 'transform 0.2s cubic-bezier(0.25, 0.8, 0.25, 1), z-index 0.2s',
                   }}
-                  onMouseEnter={(e) => { 
-                    e.currentTarget.style.transform = `translateX(${offsetFromCenter * 25}px) translateY(${translateY - 20}px) rotate(${rotation}deg)`; 
-                    e.currentTarget.style.zIndex = '50'; 
-                  }}
-                  onMouseLeave={(e) => { 
-                    e.currentTarget.style.transform = `translateX(${offsetFromCenter * 25}px) translateY(${translateY}px) rotate(${rotation}deg)`; 
-                    e.currentTarget.style.zIndex = idx; 
-                  }}
+                  onMouseEnter={(e) => { e.currentTarget.style.transform = `translateX(${offsetFromCenter * 25}px) translateY(${translateY - 20}px) rotate(${rotation}deg)`; e.currentTarget.style.zIndex = '50'; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.transform = `translateX(${offsetFromCenter * 25}px) translateY(${translateY}px) rotate(${rotation}deg)`; e.currentTarget.style.zIndex = idx; }}
                 >
                   <div style={{ fontSize: '0.85rem', lineHeight: '1', textAlign: 'left', position: 'absolute', top: '4px', left: '4px' }}>
                     <div>{card.value === 'LJ' || card.value === 'BJ' ? '' : card.value}</div>
                     <div>{card.displaySuit}</div>
                   </div>
-
                   <div style={{ height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
                     {card.value === 'LJ' ? (
                       <div style={{ fontSize: '2rem', lineHeight: '1', textAlign: 'center' }}>🃏<div style={{fontSize: '0.6rem'}}>LITTLE</div></div>
@@ -623,7 +517,6 @@ function GameTable() {
                       </div>
                     )}
                   </div>
-                  
                   <div style={{ fontSize: '0.85rem', lineHeight: '1', textAlign: 'right', transform: 'rotate(180deg)', position: 'absolute', bottom: '4px', right: '4px' }}>
                     <div>{card.value === 'LJ' || card.value === 'BJ' ? '' : card.value}</div>
                     <div>{card.displaySuit}</div>
@@ -635,7 +528,6 @@ function GameTable() {
         </div>
       )}
 
-      {/* The Scorepad Ledger */}
       {gameState.history && gameState.history.length > 0 && (
         <div style={{ marginTop: '3rem', backgroundColor: '#fff', borderRadius: '12px', padding: '1.5rem', border: '1px solid #ccc', boxShadow: '0 4px 12px rgba(0,0,0,0.05)', overflowX: 'auto' }}>
           <h3 style={{ margin: '0 0 1rem 0', color: '#333', textAlign: 'left' }}>Match Ledger</h3>
